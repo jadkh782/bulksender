@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp CSV Blaster</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d0d0d;
+      --surface: #161616;
+      --surface-2: #1e1e1e;
+      --ink: #f0ede5;
+      --muted: #7a7770;
+      --line: #2a2a2a;
+      --accent: #b8ff47;
+      --success: #4ade80;
+      --error: #ff5c5c;
+      --pending: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--ink);
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 24px 120px;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+    .hero {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 32px;
+      margin-bottom: 40px;
+    }
+    h1 {
+      font-family: 'Instrument Serif', serif;
+      font-size: 56px;
+      font-weight: 400;
+      line-height: 1;
+      margin: 0 0 16px;
+      letter-spacing: -0.01em;
+    }
+    h1 em {
+      color: var(--accent);
+      font-style: italic;
+    }
+    .hero p {
+      font-size: 14px;
+      color: var(--muted);
+      margin: 0;
+      max-width: 560px;
+    }
+    h2 {
+      font-family: 'Instrument Serif', serif;
+      font-size: 26px;
+      font-weight: 400;
+      font-style: italic;
+      margin: 0 0 20px;
+      color: var(--ink);
+    }
+    .section {
+      margin-bottom: 40px;
+      padding: 24px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+    }
+    .section.disabled {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+    .step-num {
+      font-size: 10px;
+      color: var(--accent);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      display: block;
+    }
+    label {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: 16px;
+      margin-bottom: 6px;
+    }
+    label:first-child { margin-top: 0; }
+    input[type="text"], input[type="password"], select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--ink);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      border-radius: 2px;
+      transition: border 0.15s;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    input[type="file"] {
+      display: none;
+    }
+    .file-drop {
+      border: 1px dashed var(--line);
+      padding: 40px;
+      text-align: center;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: all 0.15s;
+      background: var(--surface-2);
+    }
+    .file-drop:hover, .file-drop.drag {
+      border-color: var(--accent);
+      background: #1a2010;
+    }
+    .file-drop.loaded {
+      border-style: solid;
+      border-color: var(--accent);
+    }
+    .file-drop-label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .file-drop-filename {
+      font-size: 14px;
+      color: var(--accent);
+      margin-top: 8px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+    }
+    button {
+      background: var(--accent);
+      color: #000;
+      border: 0;
+      padding: 14px 28px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: all 0.15s;
+    }
+    button:hover:not(:disabled) { background: #c9ff6b; }
+    button:disabled {
+      background: var(--line);
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    button.secondary:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 12px;
+    }
+    .preview-table th, .preview-table td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .preview-table th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .preview-table tbody tr:hover { background: var(--surface-2); }
+    .stats {
+      display: flex;
+      gap: 24px;
+      margin: 16px 0 20px;
+      padding: 16px;
+      background: var(--surface-2);
+      border-radius: 2px;
+    }
+    .stat { flex: 1; }
+    .stat-label {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .stat-value {
+      font-family: 'Instrument Serif', serif;
+      font-size: 32px;
+      line-height: 1;
+      margin-top: 4px;
+    }
+    .stat-value.success { color: var(--success); }
+    .stat-value.error { color: var(--error); }
+    .stat-value.pending { color: var(--pending); }
+    .results {
+      max-height: 420px;
+      overflow-y: auto;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+    }
+    .result-row {
+      display: grid;
+      grid-template-columns: 40px 1fr 1fr 100px 1fr;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      align-items: center;
+      font-size: 12px;
+      gap: 12px;
+    }
+    .result-row:last-child { border-bottom: 0; }
+    .result-row .idx { color: var(--muted); }
+    .result-row .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 2px;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .status-pending { background: #2a2000; color: var(--pending); }
+    .status-sending { background: #1a2030; color: #60a5fa; }
+    .status-success { background: #0a2a14; color: var(--success); }
+    .status-error { background: #2a0a0a; color: var(--error); }
+    .result-row .detail {
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+      font-style: italic;
+    }
+    .warning {
+      padding: 12px 16px;
+      background: #2a1f05;
+      border-left: 2px solid var(--pending);
+      font-size: 12px;
+      color: #d4a824;
+      margin-bottom: 20px;
+      border-radius: 2px;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .toggle-row input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+    .toggle-row label {
+      margin: 0;
+      text-transform: none;
+      letter-spacing: normal;
+      font-size: 13px;
+      color: var(--ink);
+    }
+    .footer-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--line);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      backdrop-filter: blur(20px);
+      z-index: 100;
+    }
+    .footer-bar .progress-text {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .footer-bar .actions {
+      display: flex;
+      gap: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>WhatsApp <em>CSV</em><br>Blaster</h1>
+    <p>Upload a CSV, map name and phone columns, pick your approved template, fire. Messages sent through 360dialog's Cloud API. One-off use — the API key never leaves your browser.</p>
+  </div>
+
+  <!-- Section 1: API credentials -->
+  <div class="section" id="section-creds">
+    <span class="step-num">01 — Credentials</span>
+    <h2>Paste your key.</h2>
+
+    <label>360dialog API Key</label>
+    <input type="password" id="apiKey" placeholder="Your D360-API-KEY" autocomplete="off">
+    <p class="hint">Key stays in your browser's memory. Refresh = gone.</p>
+
+    <div class="toggle-row">
+      <input type="checkbox" id="useProxy">
+      <label for="useProxy">Route via /api/send (use if you get CORS errors)</label>
+    </div>
+  </div>
+
+  <!-- Section 2: CSV upload -->
+  <div class="section" id="section-csv">
+    <span class="step-num">02 — Data</span>
+    <h2>Drop your CSV.</h2>
+
+    <label for="csvFile" class="file-drop" id="fileDrop">
+      <div id="fileDropContent">
+        <div class="file-drop-label">Click to select or drag a .csv / .xlsx file here</div>
+        <div class="file-drop-filename" id="fileName" style="display:none"></div>
+      </div>
+    </label>
+    <input type="file" id="csvFile" accept=".csv,.xlsx,.xls,text/csv">
+
+    <div class="toggle-row" id="headerToggle" style="display:none">
+      <input type="checkbox" id="hasHeader">
+      <label for="hasHeader">First row contains column headers</label>
+    </div>
+
+    <div id="mappingArea" style="display:none; margin-top: 20px;">
+      <div class="grid-2">
+        <div>
+          <label>Phone Number Column</label>
+          <select id="phoneCol"></select>
+        </div>
+        <div>
+          <label>Name Column (optional)</label>
+          <select id="nameCol"></select>
+        </div>
+      </div>
+
+      <label style="margin-top: 24px;">Preview (first 5 rows)</label>
+      <table class="preview-table" id="previewTable"></table>
+    </div>
+  </div>
+
+  <!-- Section 3: Template config -->
+  <div class="section disabled" id="section-template">
+    <span class="step-num">03 — Template</span>
+    <h2>Configure your template.</h2>
+
+    <div class="grid-2">
+      <div>
+        <label>Template Name</label>
+        <input type="text" id="templateName" placeholder="welcome_message" autocomplete="off">
+      </div>
+      <div>
+        <label>Language Code</label>
+        <input type="text" id="langCode" value="en" placeholder="en, de, ar, en_US" autocomplete="off">
+      </div>
+    </div>
+
+    <div id="variableRow" style="display:none; margin-top: 16px;">
+      <label>Variable Name (in your template, e.g. {{variable_1}})</label>
+      <input type="text" id="paramName" value="variable_1" placeholder="variable_1, name" autocomplete="off">
+      <p class="hint">Selected name column fills this variable in the template.</p>
+    </div>
+  </div>
+
+  <!-- Section 4: Send -->
+  <div class="section disabled" id="section-send">
+    <span class="step-num">04 — Launch</span>
+    <h2>Send it.</h2>
+
+    <div class="grid-2">
+      <div>
+        <label>Max rows to send this run</label>
+        <input type="number" id="maxRows" value="5" min="1" step="1" autocomplete="off">
+        <p class="hint">Safety cap. Only rows not yet successfully sent count.</p>
+      </div>
+      <div>
+        <label>Already sent</label>
+        <input type="text" id="alreadySentDisplay" value="0" readonly style="background:#0a0a0a; color:var(--muted);">
+        <p class="hint"><a href="#" onclick="resetSent(); return false;" style="color:var(--accent); text-decoration:none;">↻ Reset history</a> — clears memory of what's been sent</p>
+      </div>
+    </div>
+
+    <div class="stats" id="stats" style="display:none">
+      <div class="stat">
+        <div class="stat-label">Total</div>
+        <div class="stat-value" id="statTotal">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Pending</div>
+        <div class="stat-value pending" id="statPending">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Success</div>
+        <div class="stat-value success" id="statSuccess">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Failed</div>
+        <div class="stat-value error" id="statError">0</div>
+      </div>
+    </div>
+
+    <div class="results" id="results" style="display:none"></div>
+
+    <button id="sendBtn" onclick="startSend()">Start Sending</button>
+  </div>
+
+  <script>
+    let csvData = null;
+    let csvColumns = [];
+    let sending = false;
+    let sendStats = { total: 0, pending: 0, success: 0, error: 0 };
+    let sentPhones = new Set(); // tracks successfully sent phone numbers this session
+
+    function updateSentDisplay() {
+      document.getElementById('alreadySentDisplay').value = sentPhones.size;
+    }
+
+    function resetSent() {
+      if (!confirm('Clear sent history? The tool will treat all rows as unsent again.')) return;
+      sentPhones.clear();
+      updateSentDisplay();
+    }
+
+    // === CSV upload ===
+    const fileDrop = document.getElementById('fileDrop');
+    const csvInput = document.getElementById('csvFile');
+
+    csvInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) loadFile(file);
+    });
+
+    ['dragenter', 'dragover'].forEach(ev => {
+      fileDrop.addEventListener(ev, (e) => { e.preventDefault(); fileDrop.classList.add('drag'); });
+    });
+    ['dragleave', 'drop'].forEach(ev => {
+      fileDrop.addEventListener(ev, (e) => { e.preventDefault(); fileDrop.classList.remove('drag'); });
+    });
+    fileDrop.addEventListener('drop', (e) => {
+      const file = e.dataTransfer.files[0];
+      if (file) loadFile(file);
+    });
+
+    document.getElementById('hasHeader').addEventListener('change', () => {
+      if (rawRows.length > 0) rebuildFromRawRows();
+    });
+
+    function loadFile(file) {
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+        loadXLSX(file);
+      } else {
+        loadCSV(file);
+      }
+    }
+
+    function loadCSV(file) {
+      Papa.parse(file, {
+        header: false,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const rows = results.data.filter(r => r.some(c => String(c).trim() !== ''));
+          finalizeLoad(file.name, rows);
+        },
+        error: (err) => alert('CSV parse error: ' + err.message)
+      });
+    }
+
+    function loadXLSX(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+          const filtered = rows.filter(r => r.some(c => String(c).trim() !== ''));
+          finalizeLoad(file.name, filtered);
+        } catch (err) {
+          alert('XLSX parse error: ' + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    let rawRows = [];
+
+    function finalizeLoad(filename, rows) {
+      if (rows.length === 0) { alert('File is empty.'); return; }
+      rawRows = rows;
+      document.getElementById('fileName').style.display = 'block';
+      document.getElementById('fileName').textContent = `${filename} — ${rows.length} rows`;
+      fileDrop.classList.add('loaded');
+      document.getElementById('headerToggle').style.display = 'flex';
+
+      // Auto-guess: if any cell in row 1 is non-numeric and looks like a label word, treat as header
+      const firstRow = rows[0].map(c => String(c).trim());
+      const looksLikeHeader = firstRow.some(c => /^(name|phone|tel|number|mobile|email|contact|vorname|handy)/i.test(c));
+      document.getElementById('hasHeader').checked = looksLikeHeader;
+
+      rebuildFromRawRows();
+    }
+
+    function rebuildFromRawRows() {
+      const hasHeader = document.getElementById('hasHeader').checked;
+      let headers, dataRows;
+
+      if (hasHeader) {
+        headers = rawRows[0].map((c, i) => String(c).trim() || `Column ${String.fromCharCode(65 + i)}`);
+        dataRows = rawRows.slice(1);
+      } else {
+        const maxCols = Math.max(...rawRows.map(r => r.length));
+        headers = Array.from({ length: maxCols }, (_, i) => `Column ${String.fromCharCode(65 + i)}`);
+        dataRows = rawRows;
+      }
+
+      csvData = dataRows.map(row => {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : ''; });
+        return obj;
+      });
+      csvColumns = headers;
+      setupMapping();
+    }
+
+    function setupMapping() {
+      const phoneCol = document.getElementById('phoneCol');
+      const nameCol = document.getElementById('nameCol');
+      phoneCol.innerHTML = '';
+      nameCol.innerHTML = '<option value="">— None (template has no variables) —</option>';
+      csvColumns.forEach(col => {
+        phoneCol.insertAdjacentHTML('beforeend', `<option value="${col}">${col}</option>`);
+        nameCol.insertAdjacentHTML('beforeend', `<option value="${col}">${col}</option>`);
+      });
+
+      // Guess sensible defaults
+      const phoneGuess = csvColumns.find(c => /phone|tel|number|mobile|handy|whatsapp/i.test(c));
+      const nameGuess = csvColumns.find(c => /name|first|vorname|contact/i.test(c));
+      if (phoneGuess) phoneCol.value = phoneGuess;
+      else if (csvColumns.length >= 2) phoneCol.value = csvColumns[1]; // default to column B
+      if (nameGuess) nameCol.value = nameGuess;
+      // else keep name as "None" by default
+
+      document.getElementById('mappingArea').style.display = 'block';
+      renderPreview();
+      updateVariableRow();
+      phoneCol.addEventListener('change', renderPreview);
+      nameCol.addEventListener('change', () => { renderPreview(); updateVariableRow(); });
+      document.getElementById('section-template').classList.remove('disabled');
+      document.getElementById('section-send').classList.remove('disabled');
+    }
+
+    function updateVariableRow() {
+      const hasName = document.getElementById('nameCol').value !== '';
+      document.getElementById('variableRow').style.display = hasName ? 'block' : 'none';
+    }
+
+    function renderPreview() {
+      const phoneC = document.getElementById('phoneCol').value;
+      const nameC = document.getElementById('nameCol').value;
+      const table = document.getElementById('previewTable');
+      const rows = csvData.slice(0, 5);
+      const hasName = nameC !== '';
+      let html = `<thead><tr><th>#</th>${hasName ? '<th>Name → {{variable}}</th>' : ''}<th>Phone → recipient</th></tr></thead><tbody>`;
+      rows.forEach((r, i) => {
+        html += `<tr><td>${i + 1}</td>${hasName ? `<td>${escapeHtml(r[nameC] || '')}</td>` : ''}<td>${escapeHtml(cleanPhone(r[phoneC] || ''))}</td></tr>`;
+      });
+      html += '</tbody>';
+      table.innerHTML = html;
+    }
+
+    function cleanPhone(raw) {
+      return String(raw).replace(/[^0-9]/g, '');
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    }
+
+    // === Send logic ===
+    async function startSend() {
+      if (sending) return;
+
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const templateName = document.getElementById('templateName').value.trim();
+      const langCode = document.getElementById('langCode').value.trim() || 'en';
+      const paramName = document.getElementById('paramName').value.trim() || 'variable_1';
+      const phoneC = document.getElementById('phoneCol').value;
+      const nameC = document.getElementById('nameCol').value;
+      const hasVariable = nameC !== '';
+      const useProxy = document.getElementById('useProxy').checked;
+      const maxRows = parseInt(document.getElementById('maxRows').value, 10) || 0;
+
+      if (!apiKey) { alert('Enter your API key.'); return; }
+      if (!templateName) { alert('Enter template name.'); return; }
+      if (!csvData || csvData.length === 0) { alert('No file loaded.'); return; }
+      if (maxRows < 1) { alert('Max rows must be at least 1.'); return; }
+
+      // Build the send queue: skip rows already successfully sent, respect max
+      const queue = [];
+      for (let i = 0; i < csvData.length; i++) {
+        if (queue.length >= maxRows) break;
+        const phone = cleanPhone(csvData[i][phoneC] || '');
+        if (!phone) continue; // skip empty phone rows entirely
+        if (sentPhones.has(phone)) continue; // skip already sent
+        queue.push({ originalIndex: i, phone, row: csvData[i] });
+      }
+
+      if (queue.length === 0) {
+        alert('Nothing to send. Either all rows are already marked sent, or no valid phone numbers remain. Use "Reset history" to start over.');
+        return;
+      }
+
+      const skipped = Math.min(maxRows, csvData.length) === queue.length
+        ? ''
+        : ` (${sentPhones.size} already sent skipped)`;
+
+      if (!confirm(`Send "${templateName}" to ${queue.length} recipients${skipped}?`)) return;
+
+      sending = true;
+      document.getElementById('sendBtn').disabled = true;
+      document.getElementById('sendBtn').textContent = 'Sending…';
+      document.getElementById('stats').style.display = 'flex';
+      document.getElementById('results').style.display = 'block';
+
+      sendStats = { total: queue.length, pending: queue.length, success: 0, error: 0 };
+      updateStats();
+
+      const results = document.getElementById('results');
+      results.innerHTML = '';
+
+      // Render initial rows
+      queue.forEach((item, qi) => {
+        const div = document.createElement('div');
+        div.className = 'result-row';
+        div.id = `row-${qi}`;
+        const nameCell = hasVariable ? `<div>${escapeHtml(item.row[nameC] || '')}</div>` : '<div>—</div>';
+        div.innerHTML = `
+          <div class="idx">${item.originalIndex + 1}</div>
+          ${nameCell}
+          <div>${escapeHtml(item.phone)}</div>
+          <div><span class="status status-pending">Pending</span></div>
+          <div class="detail">—</div>
+        `;
+        results.appendChild(div);
+      });
+
+      // Send sequentially with small delay
+      for (let qi = 0; qi < queue.length; qi++) {
+        const { phone, row } = queue[qi];
+        const name = hasVariable ? (row[nameC] || '') : '';
+
+        updateRowStatus(qi, 'sending', 'Sending…');
+
+        try {
+          if (!phone || phone.length < 8) throw new Error('Invalid phone number');
+
+          const template = {
+            name: templateName,
+            language: { code: langCode }
+          };
+
+          if (hasVariable) {
+            template.components = [
+              {
+                type: 'body',
+                parameters: [
+                  { type: 'text', parameter_name: paramName, text: String(name) }
+                ]
+              }
+            ];
+          }
+
+          const payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: phone,
+            type: 'template',
+            template
+          };
+
+          const url = useProxy ? '/api/send' : 'https://waba-v2.360dialog.io/messages';
+          const headers = { 'Content-Type': 'application/json' };
+          if (useProxy) {
+            headers['X-D360-Key'] = apiKey;
+          } else {
+            headers['D360-API-KEY'] = apiKey;
+          }
+
+          const resp = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload)
+          });
+
+          const data = await resp.json();
+
+          if (resp.ok && data.messages && data.messages[0]) {
+            updateRowStatus(qi, 'success', data.messages[0].id);
+            sendStats.success++;
+            sentPhones.add(phone); // mark as sent so re-runs skip it
+            updateSentDisplay();
+          } else {
+            const errMsg = data.error?.message || data.message || JSON.stringify(data);
+            updateRowStatus(qi, 'error', errMsg);
+            sendStats.error++;
+          }
+        } catch (err) {
+          updateRowStatus(qi, 'error', err.message);
+          sendStats.error++;
+        }
+
+        sendStats.pending--;
+        updateStats();
+
+        // small delay to avoid rate limits
+        await sleep(250);
+      }
+
+      sending = false;
+      document.getElementById('sendBtn').disabled = false;
+      document.getElementById('sendBtn').textContent = 'Done — send next batch?';
+    }
+
+    function updateRowStatus(i, status, detail) {
+      const row = document.getElementById(`row-${i}`);
+      if (!row) return;
+      const statusEl = row.querySelector('.status');
+      const detailEl = row.querySelector('.detail');
+      statusEl.className = `status status-${status}`;
+      statusEl.textContent = status;
+      detailEl.textContent = detail;
+      detailEl.title = detail;
+    }
+
+    function updateStats() {
+      document.getElementById('statTotal').textContent = sendStats.total;
+      document.getElementById('statPending').textContent = sendStats.pending;
+      document.getElementById('statSuccess').textContent = sendStats.success;
+      document.getElementById('statError').textContent = sendStats.error;
+    }
+
+    function sleep(ms) {
+      return new Promise(r => setTimeout(r, ms));
+    }
+  </script>
+</body>
+</html>
