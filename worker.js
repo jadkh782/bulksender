@@ -37,7 +37,18 @@ export default {
     if (pathname === '/api/send')      return handleSend(request);
     if (pathname === '/api/auto-send') return handleAutoSend(request, env);
 
-    return json({ error: 'Not found' }, 404);
+    if (request.method === 'GET' && (pathname === '/' || pathname === '/api')) {
+      return json({
+        name: 'bulksender',
+        ok: true,
+        endpoints: {
+          'POST /api/send':      'CORS proxy for index.html (header: X-D360-Key)',
+          'POST /api/auto-send': 'Apps Script webhook (header: Authorization: Bearer <secret>)'
+        }
+      });
+    }
+
+    return json({ error: 'Not found', path: pathname }, 404);
   }
 };
 
