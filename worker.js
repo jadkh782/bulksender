@@ -37,7 +37,7 @@ export default {
     if (pathname === '/api/send')      return handleSend(request);
     if (pathname === '/api/auto-send') return handleAutoSend(request, env);
 
-    if (request.method === 'GET' && (pathname === '/' || pathname === '/api')) {
+    if (request.method === 'GET' && pathname === '/api') {
       return json({
         name: 'bulksender',
         ok: true,

@@ -2,6 +2,12 @@ name = "bulksender"
 main = "worker.js"
 compatibility_date = "2025-09-01"
 
+# Static assets — index.html, dashboard.html. Served before the Worker runs,
+# so /api/* still hits worker.js (no matching file under public/).
+[assets]
+directory = "./public"
+not_found_handling = "404-page"
+
 # Non-secret config. Edit values here or override via the Cloudflare dashboard.
 [vars]
 TEMPLATE_NAME = "welcome_message"

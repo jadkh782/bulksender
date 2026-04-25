@@ -8,11 +8,13 @@ Plus an automatic mode that fires a template message every time a new Google For
 
 | File | What it is |
 |---|---|
-| `index.html` | Browser tool — manual CSV blaster |
-| `dashboard.html` | Live dashboard — reads send log from your Sheet |
-| `worker.js` | Cloudflare Worker — serves `/api/send` (CORS proxy) and `/api/auto-send` (webhook) |
-| `wrangler.toml` | Worker deploy config |
+| `public/index.html` | Browser tool — manual CSV blaster (served at `/`) |
+| `public/dashboard.html` | Live dashboard — served at `/dashboard.html` |
+| `worker.js` | Cloudflare Worker — handles `/api/send` (CORS proxy) and `/api/auto-send` (webhook) |
+| `wrangler.toml` | Worker + static-assets deploy config |
 | `google-apps-script/Code.gs` | Apps Script — `onFormSubmit` trigger + `doGet` JSON endpoint for the dashboard |
+
+The Worker serves the static files in `public/` from the same domain. Visiting `https://<your-worker>.workers.dev/` shows the blaster UI; `/dashboard.html` shows the dashboard; `/api/*` routes to the Worker.
 
 ## Deploy the Worker
 
