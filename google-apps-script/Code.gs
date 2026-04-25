@@ -141,8 +141,9 @@ function manualProcessPending() {
   Logger.log('Processed ' + processed + ' rows');
 }
 
-// Column G holds the lead's category/group; surfaced in the dashboard for filtering.
-var GROUP_COL = 7;
+// Extra columns surfaced in the dashboard for filtering.
+var COL_E = 5;  // Column E
+var COL_G = 7;  // Column G
 
 /**
  * Web-app endpoint for the dashboard.
@@ -154,7 +155,7 @@ var GROUP_COL = 7;
  *
  * Auth:    caller must pass ?token=<WEBHOOK_SECRET> matching the Script Property.
  * Params:  ?fromRow=<n>  (optional, default 2) — skip rows before <n>
- * Returns: { stats, daily, entries: [{ row, name, phone, group, status, detail, time }] }
+ * Returns: { stats, daily, entries: [{ row, name, phone, colE, colG, status, detail, time }] }
  */
 function doGet(e) {
   var props  = PropertiesService.getScriptProperties();
@@ -180,14 +181,16 @@ function doGet(e) {
     var n          = lastRow - fromRow + 1;
     var firstNames = sheet.getRange(fromRow, FIRST_NAME_COL, n, 1).getValues();
     var phones     = sheet.getRange(fromRow, PHONE_COL,      n, 1).getValues();
-    var groups     = sheet.getRange(fromRow, GROUP_COL,      n, 1).getValues();
+    var colsE      = sheet.getRange(fromRow, COL_E,          n, 1).getValues();
+    var colsG      = sheet.getRange(fromRow, COL_G,          n, 1).getValues();
     var statuses   = sheet.getRange(fromRow, WA_STATUS_COL,  n, 1).getValues();
     var times      = sheet.getRange(fromRow, WA_TIME_COL,    n, 1).getValues();
 
     for (var i = 0; i < n; i++) {
       var phone  = String(phones[i][0]     || '').trim();
       var name   = String(firstNames[i][0] || '').trim();
-      var group  = String(groups[i][0]     || '').trim();
+      var colE   = String(colsE[i][0]      || '').trim();
+      var colG   = String(colsG[i][0]      || '').trim();
       var status = String(statuses[i][0]   || '').trim();
       var time   = times[i][0] ? String(times[i][0]).trim() : '';
 
@@ -223,7 +226,8 @@ function doGet(e) {
         row:    fromRow + i,
         name:   name,
         phone:  phone,
-        group:  group,
+        colE:   colE,
+        colG:   colG,
         status: category,
         detail: detail,
         time:   time

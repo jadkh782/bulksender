@@ -723,7 +723,7 @@
         </div>
         <div>
           <label>Start from row</label>
-          <input type="number" id="cfgFromRow" value="7091" min="2" step="1" autocomplete="off">
+          <input type="number" id="cfgFromRow" value="7091" min="2" step="1" placeholder="empty = all" autocomplete="off">
         </div>
         <button onclick="dashSaveConfig()">Connect</button>
       </div>
@@ -789,7 +789,8 @@
           <button class="secondary" data-filter="skipped">Skipped</button>
           <button class="secondary" data-filter="pending">Pending</button>
         </div>
-        <select id="dashGroupFilter"><option value="">All groups</option></select>
+        <select id="dashColEFilter"><option value="">All (col E)</option></select>
+        <select id="dashColGFilter"><option value="">All (col G)</option></select>
         <input type="search" id="dashSearch" placeholder="Search name or phone…">
         <span class="count" id="dashResultCount"></span>
       </div>
@@ -801,7 +802,8 @@
               <th style="width: 50px;">Row</th>
               <th>Name</th>
               <th>Phone</th>
-              <th style="width: 120px;">Group</th>
+              <th style="width: 100px;">Col E</th>
+              <th style="width: 100px;">Col G</th>
               <th>Status</th>
               <th>Detail</th>
               <th style="width: 180px;">Time (UTC)</th>
@@ -1163,7 +1165,8 @@
 
     let dashEntries  = [];
     let dashFilter   = 'all';
-    let dashGroup    = '';
+    let dashColE     = '';
+    let dashColG     = '';
     let dashSearch   = '';
     let dashSelected = new Set();   // absolute sheet row numbers
     let dashSending  = false;
@@ -1179,7 +1182,8 @@
     function dashSaveConfig() {
       const url     = document.getElementById('cfgUrl').value.trim();
       const token   = document.getElementById('cfgToken').value.trim();
-      const fromRow = parseInt(document.getElementById('cfgFromRow').value, 10) || 2;
+      const raw     = document.getElementById('cfgFromRow').value.trim();
+      const fromRow = raw === '' ? null : (parseInt(raw, 10) || null);
       if (!url || !token) {
         dashShowError('URL and token are required.');
         return;
@@ -1307,7 +1311,8 @@
 
       const filtered = dashEntries.filter(e => {
         if (dashFilter !== 'all' && e.status !== dashFilter) return false;
-        if (dashGroup && (e.group || '') !== dashGroup) return false;
+        if (dashColE && (e.colE || '') !== dashColE) return false;
+        if (dashColG && (e.colG || '') !== dashColG) return false;
         if (term) {
           const hay = (e.name + ' ' + e.phone).toLowerCase();
           if (!hay.includes(term)) return false;
@@ -1346,7 +1351,8 @@
             <td style="color: var(--muted);">${e.row}</td>
             <td>${escapeHtml(e.name) || '<span style="color:var(--muted)">—</span>'}</td>
             <td style="font-variant-numeric: tabular-nums;">${escapeHtml(e.phone) || '<span style="color:var(--muted)">—</span>'}</td>
-            <td>${escapeHtml(e.group) || '<span style="color:var(--muted)">—</span>'}</td>
+            <td>${escapeHtml(e.colE) || '<span style="color:var(--muted)">—</span>'}</td>
+            <td>${escapeHtml(e.colG) || '<span style="color:var(--muted)">—</span>'}</td>
             <td><span class="status-pill ${e.status}">${e.status}</span>${sendBtn}</td>
             <td class="detail-cell" title="${escapeHtml(e.detail)}">${escapeHtml(e.detail) || '—'}</td>
             <td class="time-cell">${dashFormatTime(e.time)}</td>
@@ -1362,14 +1368,18 @@
     }
 
     function dashRebuildGroupFilter() {
-      const sel = document.getElementById('dashGroupFilter');
-      const groups = [...new Set(dashEntries.map(e => (e.group || '').trim()).filter(Boolean))].sort();
-      const current = dashGroup;
-      sel.innerHTML = '<option value="">All groups</option>' +
-        groups.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
-      // Preserve current selection if still present.
-      sel.value = groups.includes(current) ? current : '';
-      dashGroup = sel.value;
+      _populateColFilter('dashColEFilter', 'colE', 'All (col E)', () => dashColE, v => dashColE = v);
+      _populateColFilter('dashColGFilter', 'colG', 'All (col G)', () => dashColG, v => dashColG = v);
+    }
+
+    function _populateColFilter(selId, field, allLabel, getCurrent, setCurrent) {
+      const sel = document.getElementById(selId);
+      const values = [...new Set(dashEntries.map(e => (e[field] || '').trim()).filter(Boolean))].sort();
+      const current = getCurrent();
+      sel.innerHTML = `<option value="">${allLabel}</option>` +
+        values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+      sel.value = values.includes(current) ? current : '';
+      setCurrent(sel.value);
     }
 
     // Rows currently visible AND eligible to send: pending or failed.
@@ -1378,7 +1388,8 @@
       return dashEntries.filter(e => {
         if (e.status !== 'pending' && e.status !== 'failed') return false;
         if (dashFilter !== 'all' && dashFilter !== e.status) return false;
-        if (dashGroup && (e.group || '') !== dashGroup) return false;
+        if (dashColE && (e.colE || '') !== dashColE) return false;
+        if (dashColG && (e.colG || '') !== dashColG) return false;
         if (term) {
           const hay = (e.name + ' ' + e.phone).toLowerCase();
           if (!hay.includes(term)) return false;
@@ -1498,8 +1509,12 @@
       dashRenderLog();
     });
 
-    document.getElementById('dashGroupFilter').addEventListener('change', (e) => {
-      dashGroup = e.target.value;
+    document.getElementById('dashColEFilter').addEventListener('change', (e) => {
+      dashColE = e.target.value;
+      dashRenderLog();
+    });
+    document.getElementById('dashColGFilter').addEventListener('change', (e) => {
+      dashColG = e.target.value;
       dashRenderLog();
     });
 
@@ -1532,9 +1547,11 @@
       // Pre-fill dashboard config inputs from localStorage so the user can see it.
       const cfg = dashLoadConfig();
       if (cfg) {
-        document.getElementById('cfgUrl').value     = cfg.url;
-        document.getElementById('cfgToken').value   = cfg.token;
-        if (cfg.fromRow) document.getElementById('cfgFromRow').value = cfg.fromRow;
+        document.getElementById('cfgUrl').value   = cfg.url;
+        document.getElementById('cfgToken').value = cfg.token;
+        if ('fromRow' in cfg) {
+          document.getElementById('cfgFromRow').value = cfg.fromRow == null ? '' : cfg.fromRow;
+        }
       }
 
       const initial = (window.location.hash || '').replace('#', '');
