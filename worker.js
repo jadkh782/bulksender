@@ -36,6 +36,7 @@ export default {
 
     if (pathname === '/api/send')      return handleSend(request);
     if (pathname === '/api/auto-send') return handleAutoSend(request, env);
+    if (pathname === '/api/dashboard') return handleDashboard(request);
 
     if (request.method === 'GET' && pathname === '/api') {
       return json({
@@ -164,6 +165,31 @@ async function handleAutoSend(request, env) {
     }, upstream.status);
   } catch (err) {
     return json({ success: false, error: err.message, phone: cleanPhone }, 500);
+  }
+}
+
+// Server-side proxy for the dashboard's call to Apps Script. Browsers can't
+// reliably fetch script.google.com/.../exec cross-origin; the Worker can.
+async function handleDashboard(request) {
+  const params = new URL(request.url).searchParams;
+  const target = params.get('url');
+  const token  = params.get('token') || '';
+
+  if (!target || !/^https:\/\/script\.google\.com\/macros\/s\//.test(target)) {
+    return json({ error: 'Invalid or missing Apps Script url' }, 400, CORS);
+  }
+
+  const sep = target.includes('?') ? '&' : '?';
+  const upstreamUrl = target + sep + 'token=' + encodeURIComponent(token);
+
+  try {
+    const upstream = await fetch(upstreamUrl, { redirect: 'follow' });
+    return new Response(await upstream.text(), {
+      status: upstream.status,
+      headers: { ...CORS, 'Content-Type': 'application/json' }
+    });
+  } catch (err) {
+    return json({ error: err.message }, 502, CORS);
   }
 }
 

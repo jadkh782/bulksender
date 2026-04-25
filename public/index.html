@@ -1110,8 +1110,9 @@
     }
 
     function dashEndpoint(cfg) {
-      const sep = cfg.url.includes('?') ? '&' : '?';
-      return cfg.url + sep + 'token=' + encodeURIComponent(cfg.token);
+      // Proxy through the Worker — Apps Script blocks direct cross-origin fetch.
+      return '/api/dashboard?url=' + encodeURIComponent(cfg.url) +
+             '&token=' + encodeURIComponent(cfg.token);
     }
 
     async function dashFetch() {
