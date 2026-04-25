@@ -1499,37 +1499,60 @@
     async function dashSendRows(rows) {
       if (dashSending) return;
       if (!rows || rows.length === 0) return;
-      if (rows.length > DASH_SEND_CAP) {
-        alert(`Cap is ${DASH_SEND_CAP} rows per click. Narrow the filter and try again.`);
-        return;
-      }
       const cfg = dashLoadConfig();
       if (!cfg) { dashShowError('Connect first.'); return; }
-      if (!confirm(`Send WhatsApp template to ${rows.length} row(s)?`)) return;
+
+      // Split into batches of DASH_SEND_CAP (Apps Script's per-call ceiling).
+      const batches = [];
+      for (let i = 0; i < rows.length; i += DASH_SEND_CAP) {
+        batches.push(rows.slice(i, i + DASH_SEND_CAP));
+      }
+
+      const promptMsg = batches.length > 1
+        ? `Send WhatsApp template to ${rows.length} row(s)?\n\nWill be sent in ${batches.length} batches of up to ${DASH_SEND_CAP}. Keep this tab open.`
+        : `Send WhatsApp template to ${rows.length} row(s)?`;
+      if (!confirm(promptMsg)) return;
 
       dashSending = true;
       dashStopRefresh();
       dashUpdateBulkBar();
-      // Disable inline Send buttons in flight.
       document.querySelectorAll('.row-send-btn').forEach(b => b.disabled = true);
-      dashShowInfo(`Sending ${rows.length} message(s)…`);
+
+      const totals = { sent: 0, failed: 0, skipped: 0 };
+      let processed = 0;
 
       try {
-        const resp = await fetch(dashProxyBase(cfg), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'send', rows })
-        });
-        const data = await resp.json();
-        if (data.error) throw new Error(data.error);
+        for (let bi = 0; bi < batches.length; bi++) {
+          const batch = batches[bi];
+          dashShowInfo(
+            `Batch ${bi + 1}/${batches.length} — sending ${batch.length} ` +
+            `(${processed} of ${rows.length} done)…`
+          );
+          const resp = await fetch(dashProxyBase(cfg), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send', rows: batch })
+          });
+          const data = await resp.json();
+          if (data.error) throw new Error(data.error);
 
-        const sent    = (data.results || []).filter(r => r.status === 'sent').length;
-        const failed  = (data.results || []).filter(r => r.status === 'failed').length;
-        const skipped = (data.results || []).filter(r => r.status === 'skipped').length;
-        dashShowInfo(`Done — ${sent} sent · ${failed} failed · ${skipped} skipped`);
+          for (const r of (data.results || [])) {
+            if      (r.status === 'sent')    totals.sent++;
+            else if (r.status === 'failed')  totals.failed++;
+            else if (r.status === 'skipped') totals.skipped++;
+          }
+          processed += batch.length;
+        }
+        dashShowInfo(
+          `Done — ${totals.sent} sent · ${totals.failed} failed · ` +
+          `${totals.skipped} skipped (${rows.length} total)`
+        );
         dashSelected.clear();
       } catch (err) {
-        dashShowError('Send failed: ' + err.message);
+        dashShowError(
+          `Stopped after ${processed}/${rows.length}: ${err.message}. ` +
+          `Already-sent rows are persisted in the sheet.`
+        );
       } finally {
         dashSending = false;
         await dashFetch();
