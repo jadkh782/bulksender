@@ -332,7 +332,9 @@ function _sendRow(sheet, row, url, secret) {
     });
 
     var httpCode = response.getResponseCode();
-    var result   = JSON.parse(response.getContentText());
+    var raw      = response.getContentText() || '';
+    var result   = {};
+    try { result = JSON.parse(raw); } catch (parseErr) { /* leave empty; raw used below */ }
 
     if (httpCode === 200 && result.success) {
       var id = result.messageId || 'ok';
@@ -341,7 +343,8 @@ function _sendRow(sheet, row, url, secret) {
       return { row: row, status: 'sent', detail: id };
     }
 
-    var err = result.error || ('HTTP ' + httpCode);
+    var err = result.error
+            || ('HTTP ' + httpCode + (raw ? ' — ' + raw.substring(0, 120) : ' — empty body'));
     sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err);
     sheet.getRange(row, WA_TIME_COL).setValue(now);
     return { row: row, status: 'failed', detail: err };

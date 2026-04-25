@@ -1331,13 +1331,14 @@
       empty.style.display = 'none';
 
       body.innerHTML = filtered.map(e => {
-        const isPending = e.status === 'pending';
-        const checked   = dashSelected.has(e.row) ? 'checked' : '';
-        const cb = isPending
+        const isSendable = e.status === 'pending' || e.status === 'failed';
+        const checked    = dashSelected.has(e.row) ? 'checked' : '';
+        const cb = isSendable
           ? `<input type="checkbox" class="row-cb" data-row="${e.row}" ${checked}>`
           : `<input type="checkbox" class="row-cb" disabled>`;
-        const sendBtn = isPending
-          ? `<button class="row-send-btn" data-row="${e.row}" ${dashSending ? 'disabled' : ''}>Send</button>`
+        const label = e.status === 'failed' ? 'Retry' : 'Send';
+        const sendBtn = isSendable
+          ? `<button class="row-send-btn" data-row="${e.row}" ${dashSending ? 'disabled' : ''}>${label}</button>`
           : '';
         return `
           <tr>
@@ -1353,10 +1354,10 @@
         `;
       }).join('');
 
-      // Keep header "select all" in sync.
-      const pendingFiltered = filtered.filter(e => e.status === 'pending');
-      const allSelected = pendingFiltered.length > 0 &&
-        pendingFiltered.every(e => dashSelected.has(e.row));
+      // Keep header "select all" in sync with all sendable visible rows.
+      const sendable = filtered.filter(e => e.status === 'pending' || e.status === 'failed');
+      const allSelected = sendable.length > 0 &&
+        sendable.every(e => dashSelected.has(e.row));
       document.getElementById('dashSelectAll').checked = allSelected;
     }
 
@@ -1371,11 +1372,12 @@
       dashGroup = sel.value;
     }
 
-    function dashFilteredPending() {
+    // Rows currently visible AND eligible to send: pending or failed.
+    function dashFilteredSendable() {
       const term = dashSearch.toLowerCase();
       return dashEntries.filter(e => {
-        if (e.status !== 'pending') return false;
-        if (dashFilter !== 'all' && dashFilter !== 'pending') return false;
+        if (e.status !== 'pending' && e.status !== 'failed') return false;
+        if (dashFilter !== 'all' && dashFilter !== e.status) return false;
         if (dashGroup && (e.group || '') !== dashGroup) return false;
         if (term) {
           const hay = (e.name + ' ' + e.phone).toLowerCase();
@@ -1386,9 +1388,9 @@
     }
 
     function dashToggleAll(checked) {
-      const pending = dashFilteredPending();
-      if (checked) pending.forEach(e => dashSelected.add(e.row));
-      else         pending.forEach(e => dashSelected.delete(e.row));
+      const rows = dashFilteredSendable();
+      if (checked) rows.forEach(e => dashSelected.add(e.row));
+      else         rows.forEach(e => dashSelected.delete(e.row));
       dashRenderLog();
     }
 
@@ -1420,7 +1422,7 @@
       }
       const cfg = dashLoadConfig();
       if (!cfg) { dashShowError('Connect first.'); return; }
-      if (!confirm(`Send WhatsApp template to ${rows.length} pending row(s)?`)) return;
+      if (!confirm(`Send WhatsApp template to ${rows.length} row(s)?`)) return;
 
       dashSending = true;
       dashStopRefresh();
@@ -1515,9 +1517,9 @@
       else            dashSelected.delete(row);
       dashUpdateBulkBar();
       // Update header select-all without re-rendering rows.
-      const pending = dashFilteredPending();
+      const sendable = dashFilteredSendable();
       document.getElementById('dashSelectAll').checked =
-        pending.length > 0 && pending.every(p => dashSelected.has(p.row));
+        sendable.length > 0 && sendable.every(p => dashSelected.has(p.row));
     });
     document.getElementById('dashLogBody').addEventListener('click', (e) => {
       const btn = e.target.closest('button.row-send-btn[data-row]');
