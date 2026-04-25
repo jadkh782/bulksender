@@ -394,6 +394,51 @@
       font-size: 12px;
     }
 
+    /* Multi-select pill rows under the toolbar */
+    .pills-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 4px 0;
+    }
+    .pills-row .pills-label {
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      min-width: 56px;
+    }
+    .pill {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .pill:hover { color: var(--ink); border-color: var(--ink); }
+    .pill.active {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+    }
+    .pills-clear {
+      background: transparent;
+      color: var(--muted);
+      border: 0;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .pills-clear:hover { color: var(--accent); }
+
     /* Dashboard stat cards */
     .stats-grid {
       display: grid;
@@ -789,10 +834,18 @@
           <button class="secondary" data-filter="skipped">Skipped</button>
           <button class="secondary" data-filter="pending">Pending</button>
         </div>
-        <select id="dashColEFilter"><option value="">All (col E)</option></select>
-        <select id="dashColGFilter"><option value="">All (col G)</option></select>
         <input type="search" id="dashSearch" placeholder="Search name or phone…">
         <span class="count" id="dashResultCount"></span>
+      </div>
+      <div class="pills-row">
+        <span class="pills-label">Col E</span>
+        <div id="dashColEFilter" style="display:contents"></div>
+        <button class="pills-clear" id="dashColEClear" title="Clear column E filter">clear</button>
+      </div>
+      <div class="pills-row" style="margin-bottom:14px">
+        <span class="pills-label">Col G</span>
+        <div id="dashColGFilter" style="display:contents"></div>
+        <button class="pills-clear" id="dashColGClear" title="Clear column G filter">clear</button>
       </div>
       <div style="max-height: 520px; overflow-y: auto;">
         <table class="log-table">
@@ -1183,8 +1236,8 @@
 
     let dashEntries  = [];
     let dashFilter   = 'all';
-    let dashColE     = '';
-    let dashColG     = '';
+    let dashColESet  = new Set();   // empty = no filter; otherwise OR within E
+    let dashColGSet  = new Set();   // empty = no filter; otherwise OR within G
     let dashSearch   = '';
     let dashSelected = new Set();   // absolute sheet row numbers
     let dashSending  = false;
@@ -1329,8 +1382,8 @@
 
       const filtered = dashEntries.filter(e => {
         if (dashFilter !== 'all' && e.status !== dashFilter) return false;
-        if (dashColE && (e.colE || '') !== dashColE) return false;
-        if (dashColG && (e.colG || '') !== dashColG) return false;
+        if (dashColESet.size > 0 && !dashColESet.has((e.colE || ''))) return false;
+        if (dashColGSet.size > 0 && !dashColGSet.has((e.colG || ''))) return false;
         if (term) {
           const hay = (e.name + ' ' + e.phone).toLowerCase();
           if (!hay.includes(term)) return false;
@@ -1386,20 +1439,19 @@
     }
 
     function dashRebuildGroupFilter() {
-      _populateColFilter('dashColEFilter', 'colE', 'All (col E)', COL_E_OPTIONS, () => dashColE, v => dashColE = v);
-      _populateColFilter('dashColGFilter', 'colG', 'All (col G)', COL_G_OPTIONS, () => dashColG, v => dashColG = v);
+      _populateColFilter('dashColEFilter', 'colE', COL_E_OPTIONS, dashColESet);
+      _populateColFilter('dashColGFilter', 'colG', COL_G_OPTIONS, dashColGSet);
     }
 
-    // Builds the dropdown from canonical options + any extras seen in current data.
-    function _populateColFilter(selId, field, allLabel, canonical, getCurrent, setCurrent) {
-      const sel  = document.getElementById(selId);
+    // Renders pill toggles from canonical options + any extras seen in current data.
+    function _populateColFilter(containerId, field, canonical, selectedSet) {
+      const container = document.getElementById(containerId);
       const seen = dashEntries.map(e => (e[field] || '').trim()).filter(Boolean);
       const values = [...new Set([...canonical, ...seen])];
-      const current = getCurrent();
-      sel.innerHTML = `<option value="">${allLabel}</option>` +
-        values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
-      sel.value = values.includes(current) ? current : '';
-      setCurrent(sel.value);
+      container.innerHTML = values.map(v => {
+        const active = selectedSet.has(v) ? 'active' : '';
+        return `<button type="button" class="pill ${active}" data-value="${escapeHtml(v)}">${escapeHtml(v)}</button>`;
+      }).join('');
     }
 
     // Rows currently visible AND eligible to send: pending or failed.
@@ -1408,8 +1460,8 @@
       return dashEntries.filter(e => {
         if (e.status !== 'pending' && e.status !== 'failed') return false;
         if (dashFilter !== 'all' && dashFilter !== e.status) return false;
-        if (dashColE && (e.colE || '') !== dashColE) return false;
-        if (dashColG && (e.colG || '') !== dashColG) return false;
+        if (dashColESet.size > 0 && !dashColESet.has((e.colE || ''))) return false;
+        if (dashColGSet.size > 0 && !dashColGSet.has((e.colG || ''))) return false;
         if (term) {
           const hay = (e.name + ' ' + e.phone).toLowerCase();
           if (!hay.includes(term)) return false;
@@ -1529,14 +1581,22 @@
       dashRenderLog();
     });
 
-    document.getElementById('dashColEFilter').addEventListener('change', (e) => {
-      dashColE = e.target.value;
-      dashRenderLog();
-    });
-    document.getElementById('dashColGFilter').addEventListener('change', (e) => {
-      dashColG = e.target.value;
-      dashRenderLog();
-    });
+    function _wirePillRow(containerId, clearId, selectedSet) {
+      document.getElementById(containerId).addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button.pill[data-value]');
+        if (!btn) return;
+        const v = btn.dataset.value;
+        if (selectedSet.has(v)) selectedSet.delete(v);
+        else                    selectedSet.add(v);
+        dashRenderLog();
+      });
+      document.getElementById(clearId).addEventListener('click', () => {
+        selectedSet.clear();
+        dashRenderLog();
+      });
+    }
+    _wirePillRow('dashColEFilter', 'dashColEClear', dashColESet);
+    _wirePillRow('dashColGFilter', 'dashColGClear', dashColGSet);
 
     document.getElementById('dashSearch').addEventListener('input', (e) => {
       dashSearch = e.target.value;
