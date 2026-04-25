@@ -21,41 +21,90 @@
       --success: #4ade80;
       --error: #ff5c5c;
       --pending: #fbbf24;
+      --info: #60a5fa;
     }
     * { box-sizing: border-box; }
     body {
       font-family: 'JetBrains Mono', monospace;
       background: var(--bg);
       color: var(--ink);
-      max-width: 960px;
+      max-width: 1200px;
       margin: 0 auto;
-      padding: 48px 24px 120px;
+      padding: 48px 24px 80px;
       line-height: 1.5;
       font-size: 14px;
     }
     .hero {
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 32px;
-      margin-bottom: 40px;
+      padding-bottom: 24px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 24px;
+      flex-wrap: wrap;
     }
     h1 {
       font-family: 'Instrument Serif', serif;
-      font-size: 56px;
+      font-size: 48px;
       font-weight: 400;
       line-height: 1;
-      margin: 0 0 16px;
+      margin: 0 0 8px;
       letter-spacing: -0.01em;
     }
-    h1 em {
-      color: var(--accent);
-      font-style: italic;
-    }
+    h1 em { color: var(--accent); font-style: italic; }
     .hero p {
-      font-size: 14px;
+      font-size: 13px;
       color: var(--muted);
       margin: 0;
       max-width: 560px;
     }
+    .meta {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .meta .dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .meta .dot.live { background: var(--success); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 32px;
+    }
+    .tab-btn {
+      background: transparent;
+      color: var(--muted);
+      border: 0;
+      border-bottom: 2px solid transparent;
+      padding: 14px 22px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      margin-bottom: -1px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover { color: var(--ink); }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     h2 {
       font-family: 'Instrument Serif', serif;
       font-size: 26px;
@@ -65,16 +114,13 @@
       color: var(--ink);
     }
     .section {
-      margin-bottom: 40px;
+      margin-bottom: 32px;
       padding: 24px;
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: 2px;
     }
-    .section.disabled {
-      opacity: 0.4;
-      pointer-events: none;
-    }
+    .section.disabled { opacity: 0.4; pointer-events: none; }
     .step-num {
       font-size: 10px;
       color: var(--accent);
@@ -93,7 +139,8 @@
       margin-bottom: 6px;
     }
     label:first-child { margin-top: 0; }
-    input[type="text"], input[type="password"], select, textarea {
+    input[type="text"], input[type="password"], input[type="number"],
+    input[type="search"], select, textarea {
       width: 100%;
       padding: 10px 12px;
       border: 1px solid var(--line);
@@ -108,9 +155,8 @@
       outline: none;
       border-color: var(--accent);
     }
-    input[type="file"] {
-      display: none;
-    }
+    input[type="file"] { display: none; }
+
     .file-drop {
       border: 1px dashed var(--line);
       padding: 40px;
@@ -124,29 +170,13 @@
       border-color: var(--accent);
       background: #1a2010;
     }
-    .file-drop.loaded {
-      border-style: solid;
-      border-color: var(--accent);
-    }
-    .file-drop-label {
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .file-drop-filename {
-      font-size: 14px;
-      color: var(--accent);
-      margin-top: 8px;
-    }
-    .grid-2 {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-    .grid-3 {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 16px;
-    }
+    .file-drop.loaded { border-style: solid; border-color: var(--accent); }
+    .file-drop-label { font-size: 13px; color: var(--muted); }
+    .file-drop-filename { font-size: 14px; color: var(--accent); margin-top: 8px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
     button {
       background: var(--accent);
       color: #000;
@@ -171,11 +201,20 @@
       background: transparent;
       color: var(--ink);
       border: 1px solid var(--line);
+      padding: 11px 20px;
+      font-size: 12px;
     }
     button.secondary:hover:not(:disabled) {
       border-color: var(--accent);
       color: var(--accent);
     }
+    button.secondary.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: #1a2010;
+    }
+
+    /* Blaster preview */
     .preview-table {
       width: 100%;
       border-collapse: collapse;
@@ -195,7 +234,9 @@
       text-transform: uppercase;
     }
     .preview-table tbody tr:hover { background: var(--surface-2); }
-    .stats {
+
+    /* Blaster send stats (4-up flex row) */
+    .send-stats {
       display: flex;
       gap: 24px;
       margin: 16px 0 20px;
@@ -203,22 +244,24 @@
       background: var(--surface-2);
       border-radius: 2px;
     }
-    .stat { flex: 1; }
-    .stat-label {
+    .send-stats .stat { flex: 1; }
+    .send-stats .stat-label {
       font-size: 10px;
       letter-spacing: 0.12em;
       text-transform: uppercase;
       color: var(--muted);
     }
-    .stat-value {
+    .send-stats .stat-value {
       font-family: 'Instrument Serif', serif;
       font-size: 32px;
       line-height: 1;
       margin-top: 4px;
     }
-    .stat-value.success { color: var(--success); }
-    .stat-value.error { color: var(--error); }
-    .stat-value.pending { color: var(--pending); }
+    .send-stats .stat-value.success { color: var(--success); }
+    .send-stats .stat-value.error   { color: var(--error); }
+    .send-stats .stat-value.pending { color: var(--pending); }
+
+    /* Blaster results list */
     .results {
       max-height: 420px;
       overflow-y: auto;
@@ -236,7 +279,7 @@
     }
     .result-row:last-child { border-bottom: 0; }
     .result-row .idx { color: var(--muted); }
-    .result-row .status {
+    .status {
       display: inline-block;
       padding: 3px 8px;
       border-radius: 2px;
@@ -246,9 +289,10 @@
       font-weight: 600;
     }
     .status-pending { background: #2a2000; color: var(--pending); }
-    .status-sending { background: #1a2030; color: #60a5fa; }
+    .status-sending { background: #1a2030; color: var(--info); }
     .status-success { background: #0a2a14; color: var(--success); }
-    .status-error { background: #2a0a0a; color: var(--error); }
+    .status-error   { background: #2a0a0a; color: var(--error); }
+    .status-skipped { background: #0a1a2a; color: var(--info); }
     .result-row .detail {
       color: var(--muted);
       font-size: 11px;
@@ -261,15 +305,6 @@
       color: var(--muted);
       margin-top: 4px;
       font-style: italic;
-    }
-    .warning {
-      padding: 12px 16px;
-      background: #2a1f05;
-      border-left: 2px solid var(--pending);
-      font-size: 12px;
-      color: #d4a824;
-      margin-bottom: 20px;
-      border-radius: 2px;
     }
     .toggle-row {
       display: flex;
@@ -289,156 +324,458 @@
       font-size: 13px;
       color: var(--ink);
     }
-    .footer-bar {
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
-      background: var(--surface);
-      border-top: 1px solid var(--line);
-      padding: 16px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      backdrop-filter: blur(20px);
-      z-index: 100;
+
+    /* Dashboard config row */
+    .config-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 12px;
+      align-items: end;
     }
-    .footer-bar .progress-text {
-      font-size: 12px;
+
+    /* Dashboard stat cards */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+    }
+    .stat-card {
+      padding: 18px 20px;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+    }
+    .stat-card .label {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
       color: var(--muted);
     }
-    .footer-bar .actions {
+    .stat-card .value {
+      font-family: 'Instrument Serif', serif;
+      font-size: 44px;
+      line-height: 1;
+      margin-top: 6px;
+    }
+    .stat-card.sent .value    { color: var(--success); }
+    .stat-card.failed .value  { color: var(--error); }
+    .stat-card.skipped .value { color: var(--info); }
+    .stat-card.pending .value { color: var(--pending); }
+    .stat-card .sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    /* Dashboard chart */
+    .chart {
+      display: grid;
+      grid-template-columns: repeat(14, 1fr);
+      gap: 6px;
+      align-items: end;
+      height: 140px;
+      padding: 12px 0 4px;
+    }
+    .chart .col {
+      position: relative;
       display: flex;
-      gap: 12px;
+      flex-direction: column;
+      justify-content: end;
+      height: 100%;
+      gap: 2px;
+    }
+    .chart .bar { width: 100%; border-radius: 1px; transition: opacity 0.15s; }
+    .chart .bar.sent   { background: var(--success); }
+    .chart .bar.failed { background: var(--error); }
+    .chart .col:hover .bar { opacity: 0.7; }
+    .chart-row {
+      display: grid;
+      grid-template-columns: repeat(14, 1fr);
+      gap: 6px;
+    }
+    .chart-row .tick {
+      font-size: 9px;
+      color: var(--muted);
+      text-align: center;
+      letter-spacing: 0.04em;
+    }
+    .legend {
+      display: flex;
+      gap: 16px;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 12px;
+    }
+    .legend .swatch {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 1px;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .legend .swatch.sent   { background: var(--success); }
+    .legend .swatch.failed { background: var(--error); }
+
+    /* Dashboard log */
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .toolbar .filters { display: flex; gap: 6px; }
+    .toolbar input[type="search"] {
+      max-width: 280px;
+      margin-left: auto;
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+    .toolbar .count {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .log-table th, .log-table td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    .log-table th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+    }
+    .log-table tbody tr:hover { background: var(--surface-2); }
+    .status-pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 2px;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .status-pill.sent    { background: #0a2a14; color: var(--success); }
+    .status-pill.failed  { background: #2a0a0a; color: var(--error); }
+    .status-pill.skipped { background: #0a1a2a; color: var(--info); }
+    .status-pill.pending { background: #2a2000; color: var(--pending); }
+    .detail-cell {
+      color: var(--muted);
+      font-size: 11px;
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .time-cell { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+      font-size: 13px;
+      font-style: italic;
+    }
+    .error-box {
+      padding: 12px 16px;
+      background: #2a0f0f;
+      border-left: 2px solid var(--error);
+      font-size: 12px;
+      color: #ff8a8a;
+      border-radius: 2px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 720px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .config-row { grid-template-columns: 1fr; }
+      .chart, .chart-row { grid-template-columns: repeat(7, 1fr); }
+      .chart .col:nth-child(2n) { display: none; }
+      .chart-row .tick:nth-child(2n) { display: none; }
     }
   </style>
 </head>
 <body>
   <div class="hero">
-    <h1>WhatsApp <em>CSV</em><br>Blaster</h1>
-    <p>Upload a CSV, map name and phone columns, pick your approved template, fire. Messages sent through 360dialog's Cloud API. One-off use — the API key never leaves your browser.</p>
-  </div>
-
-  <!-- Section 1: API credentials -->
-  <div class="section" id="section-creds">
-    <span class="step-num">01 — Credentials</span>
-    <h2>Paste your key.</h2>
-
-    <label>360dialog API Key</label>
-    <input type="password" id="apiKey" placeholder="Your D360-API-KEY" autocomplete="off">
-    <p class="hint">Key stays in your browser's memory. Refresh = gone.</p>
-
-    <div class="toggle-row">
-      <input type="checkbox" id="useProxy">
-      <label for="useProxy">Route via /api/send (use if you get CORS errors)</label>
+    <div>
+      <h1>WhatsApp <em>CSV</em> Blaster</h1>
+      <p>Manual CSV blasts and a live view of your auto-send log, in one place.</p>
+    </div>
+    <div class="meta" id="dashMeta" style="display:none">
+      <span class="dot" id="dashDot"></span>
+      <span id="dashMetaText">Not connected</span>
     </div>
   </div>
 
-  <!-- Section 2: CSV upload -->
-  <div class="section" id="section-csv">
-    <span class="step-num">02 — Data</span>
-    <h2>Drop your CSV.</h2>
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="blaster"   role="tab">Blaster</button>
+    <button class="tab-btn"        data-tab="dashboard" role="tab">Dashboard</button>
+  </div>
 
-    <label for="csvFile" class="file-drop" id="fileDrop">
-      <div id="fileDropContent">
-        <div class="file-drop-label">Click to select or drag a .csv / .xlsx file here</div>
-        <div class="file-drop-filename" id="fileName" style="display:none"></div>
+  <!-- ================= BLASTER TAB ================= -->
+  <div class="tab-panel active" id="tab-blaster">
+
+    <!-- Section 1: API credentials -->
+    <div class="section" id="section-creds">
+      <span class="step-num">01 — Credentials</span>
+      <h2>Paste your key.</h2>
+
+      <label>360dialog API Key</label>
+      <input type="password" id="apiKey" placeholder="Your D360-API-KEY" autocomplete="off">
+      <p class="hint">Key stays in your browser's memory. Refresh = gone.</p>
+
+      <div class="toggle-row">
+        <input type="checkbox" id="useProxy">
+        <label for="useProxy">Route via /api/send (use if you get CORS errors)</label>
       </div>
-    </label>
-    <input type="file" id="csvFile" accept=".csv,.xlsx,.xls,text/csv">
-
-    <div class="toggle-row" id="headerToggle" style="display:none">
-      <input type="checkbox" id="hasHeader">
-      <label for="hasHeader">First row contains column headers</label>
     </div>
 
-    <div id="mappingArea" style="display:none; margin-top: 20px;">
+    <!-- Section 2: CSV upload -->
+    <div class="section" id="section-csv">
+      <span class="step-num">02 — Data</span>
+      <h2>Drop your CSV.</h2>
+
+      <label for="csvFile" class="file-drop" id="fileDrop">
+        <div id="fileDropContent">
+          <div class="file-drop-label">Click to select or drag a .csv / .xlsx file here</div>
+          <div class="file-drop-filename" id="fileName" style="display:none"></div>
+        </div>
+      </label>
+      <input type="file" id="csvFile" accept=".csv,.xlsx,.xls,text/csv">
+
+      <div class="toggle-row" id="headerToggle" style="display:none">
+        <input type="checkbox" id="hasHeader">
+        <label for="hasHeader">First row contains column headers</label>
+      </div>
+
+      <div id="mappingArea" style="display:none; margin-top: 20px;">
+        <div class="grid-2">
+          <div>
+            <label>Phone Number Column</label>
+            <select id="phoneCol"></select>
+          </div>
+          <div>
+            <label>Name Column (optional)</label>
+            <select id="nameCol"></select>
+          </div>
+        </div>
+
+        <label style="margin-top: 24px;">Preview (first 5 rows)</label>
+        <table class="preview-table" id="previewTable"></table>
+      </div>
+    </div>
+
+    <!-- Section 3: Template config -->
+    <div class="section disabled" id="section-template">
+      <span class="step-num">03 — Template</span>
+      <h2>Configure your template.</h2>
+
       <div class="grid-2">
         <div>
-          <label>Phone Number Column</label>
-          <select id="phoneCol"></select>
+          <label>Template Name</label>
+          <input type="text" id="templateName" placeholder="welcome_message" autocomplete="off">
         </div>
         <div>
-          <label>Name Column (optional)</label>
-          <select id="nameCol"></select>
+          <label>Language Code</label>
+          <input type="text" id="langCode" value="en" placeholder="en, de, ar, en_US" autocomplete="off">
         </div>
       </div>
 
-      <label style="margin-top: 24px;">Preview (first 5 rows)</label>
-      <table class="preview-table" id="previewTable"></table>
-    </div>
-  </div>
-
-  <!-- Section 3: Template config -->
-  <div class="section disabled" id="section-template">
-    <span class="step-num">03 — Template</span>
-    <h2>Configure your template.</h2>
-
-    <div class="grid-2">
-      <div>
-        <label>Template Name</label>
-        <input type="text" id="templateName" placeholder="welcome_message" autocomplete="off">
-      </div>
-      <div>
-        <label>Language Code</label>
-        <input type="text" id="langCode" value="en" placeholder="en, de, ar, en_US" autocomplete="off">
+      <div id="variableRow" style="display:none; margin-top: 16px;">
+        <label>Variable Name (in your template, e.g. {{variable_1}})</label>
+        <input type="text" id="paramName" value="variable_1" placeholder="variable_1, name" autocomplete="off">
+        <p class="hint">Selected name column fills this variable in the template.</p>
       </div>
     </div>
 
-    <div id="variableRow" style="display:none; margin-top: 16px;">
-      <label>Variable Name (in your template, e.g. {{variable_1}})</label>
-      <input type="text" id="paramName" value="variable_1" placeholder="variable_1, name" autocomplete="off">
-      <p class="hint">Selected name column fills this variable in the template.</p>
-    </div>
-  </div>
+    <!-- Section 4: Send -->
+    <div class="section disabled" id="section-send">
+      <span class="step-num">04 — Launch</span>
+      <h2>Send it.</h2>
 
-  <!-- Section 4: Send -->
-  <div class="section disabled" id="section-send">
-    <span class="step-num">04 — Launch</span>
-    <h2>Send it.</h2>
+      <div class="grid-2">
+        <div>
+          <label>Max rows to send this run</label>
+          <input type="number" id="maxRows" value="5" min="1" step="1" autocomplete="off">
+          <p class="hint">Safety cap. Only rows not yet successfully sent count.</p>
+        </div>
+        <div>
+          <label>Already sent</label>
+          <input type="text" id="alreadySentDisplay" value="0" readonly style="background:#0a0a0a; color:var(--muted);">
+          <p class="hint"><a href="#" onclick="resetSent(); return false;" style="color:var(--accent); text-decoration:none;">↻ Reset history</a> — clears memory of what's been sent</p>
+        </div>
+      </div>
 
-    <div class="grid-2">
-      <div>
-        <label>Max rows to send this run</label>
-        <input type="number" id="maxRows" value="5" min="1" step="1" autocomplete="off">
-        <p class="hint">Safety cap. Only rows not yet successfully sent count.</p>
+      <div class="send-stats" id="stats" style="display:none">
+        <div class="stat">
+          <div class="stat-label">Total</div>
+          <div class="stat-value" id="statTotal">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Pending</div>
+          <div class="stat-value pending" id="statPending">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Success</div>
+          <div class="stat-value success" id="statSuccess">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Failed</div>
+          <div class="stat-value error" id="statError">0</div>
+        </div>
       </div>
-      <div>
-        <label>Already sent</label>
-        <input type="text" id="alreadySentDisplay" value="0" readonly style="background:#0a0a0a; color:var(--muted);">
-        <p class="hint"><a href="#" onclick="resetSent(); return false;" style="color:var(--accent); text-decoration:none;">↻ Reset history</a> — clears memory of what's been sent</p>
-      </div>
-    </div>
 
-    <div class="stats" id="stats" style="display:none">
-      <div class="stat">
-        <div class="stat-label">Total</div>
-        <div class="stat-value" id="statTotal">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">Pending</div>
-        <div class="stat-value pending" id="statPending">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">Success</div>
-        <div class="stat-value success" id="statSuccess">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">Failed</div>
-        <div class="stat-value error" id="statError">0</div>
-      </div>
+      <div class="results" id="results" style="display:none"></div>
+
+      <button id="sendBtn" onclick="startSend()">Start Sending</button>
     </div>
 
-    <div class="results" id="results" style="display:none"></div>
+  </div><!-- /tab-blaster -->
 
-    <button id="sendBtn" onclick="startSend()">Start Sending</button>
-  </div>
+  <!-- ================= DASHBOARD TAB ================= -->
+  <div class="tab-panel" id="tab-dashboard">
+
+    <!-- Config -->
+    <div class="section" id="dashConfigSection">
+      <span class="step-num">Connect</span>
+      <h2>Point at your sheet.</h2>
+      <div class="config-row">
+        <div>
+          <label>Apps Script Web App URL</label>
+          <input type="text" id="cfgUrl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+        </div>
+        <div>
+          <label>Webhook Secret (token)</label>
+          <input type="password" id="cfgToken" placeholder="Same secret you set in Script Properties" autocomplete="off">
+        </div>
+        <button onclick="dashSaveConfig()">Connect</button>
+      </div>
+      <p class="hint">Stored in this browser only (localStorage). Deploy <code>doGet</code> from <code>Code.gs</code> as a Web App, set <code>WEBHOOK_SECRET</code> in Script Properties, paste the URL + secret here.</p>
+    </div>
+
+    <div id="dashErrorBox"></div>
+
+    <!-- Stats -->
+    <div class="section" id="dashStatsSection" style="display:none">
+      <h2>Numbers.</h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="label">Total Leads</div>
+          <div class="value" id="dashTotal">—</div>
+        </div>
+        <div class="stat-card sent">
+          <div class="label">Sent</div>
+          <div class="value" id="dashSent">—</div>
+          <div class="sub" id="dashRate">—</div>
+        </div>
+        <div class="stat-card failed">
+          <div class="label">Failed</div>
+          <div class="value" id="dashFailed">—</div>
+        </div>
+        <div class="stat-card skipped">
+          <div class="label">Skipped</div>
+          <div class="value" id="dashSkipped">—</div>
+        </div>
+        <div class="stat-card pending">
+          <div class="label">Pending</div>
+          <div class="value" id="dashPending">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Daily chart -->
+    <div class="section" id="dashChartSection" style="display:none">
+      <h2>Last 14 days.</h2>
+      <div class="chart" id="dashChart"></div>
+      <div class="chart-row" id="dashChartLabels"></div>
+      <div class="legend">
+        <span><span class="swatch sent"></span>Sent</span>
+        <span><span class="swatch failed"></span>Failed</span>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="section" id="dashLogSection" style="display:none">
+      <h2>Recent activity.</h2>
+      <div class="toolbar">
+        <div class="filters" id="dashFilters">
+          <button class="secondary active" data-filter="all">All</button>
+          <button class="secondary" data-filter="sent">Sent</button>
+          <button class="secondary" data-filter="failed">Failed</button>
+          <button class="secondary" data-filter="skipped">Skipped</button>
+          <button class="secondary" data-filter="pending">Pending</button>
+        </div>
+        <input type="search" id="dashSearch" placeholder="Search name or phone…">
+        <span class="count" id="dashResultCount"></span>
+      </div>
+      <div style="max-height: 520px; overflow-y: auto;">
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th style="width: 50px;">Row</th>
+              <th>Name</th>
+              <th>Phone</th>
+              <th>Status</th>
+              <th>Detail</th>
+              <th style="width: 180px;">Time (UTC)</th>
+            </tr>
+          </thead>
+          <tbody id="dashLogBody"></tbody>
+        </table>
+        <div class="empty" id="dashLogEmpty" style="display:none">No entries match.</div>
+      </div>
+    </div>
+
+  </div><!-- /tab-dashboard -->
 
   <script>
+    // ───────────── Shared helpers ─────────────
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // ───────────── Tab switching ─────────────
+    function showTab(name) {
+      document.querySelectorAll('.tab-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.tab === name)
+      );
+      document.querySelectorAll('.tab-panel').forEach(p =>
+        p.classList.toggle('active', p.id === 'tab-' + name)
+      );
+      const isDash = name === 'dashboard';
+      document.getElementById('dashMeta').style.display = isDash ? 'block' : 'none';
+      if (window.location.hash !== '#' + name) {
+        history.replaceState(null, '', '#' + name);
+      }
+      if (isDash) dashStartRefresh();
+      else        dashStopRefresh();
+    }
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => showTab(btn.dataset.tab));
+    });
+
+    // ───────────── Blaster ─────────────
     let csvData = null;
     let csvColumns = [];
     let sending = false;
     let sendStats = { total: 0, pending: 0, success: 0, error: 0 };
     let sentPhones = new Set(); // tracks successfully sent phone numbers this session
+    let rawRows = [];
 
     function updateSentDisplay() {
       document.getElementById('alreadySentDisplay').value = sentPhones.size;
@@ -450,7 +787,6 @@
       updateSentDisplay();
     }
 
-    // === CSV upload ===
     const fileDrop = document.getElementById('fileDrop');
     const csvInput = document.getElementById('csvFile');
 
@@ -476,11 +812,8 @@
 
     function loadFile(file) {
       const name = file.name.toLowerCase();
-      if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
-        loadXLSX(file);
-      } else {
-        loadCSV(file);
-      }
+      if (name.endsWith('.xlsx') || name.endsWith('.xls')) loadXLSX(file);
+      else loadCSV(file);
     }
 
     function loadCSV(file) {
@@ -512,8 +845,6 @@
       reader.readAsArrayBuffer(file);
     }
 
-    let rawRows = [];
-
     function finalizeLoad(filename, rows) {
       if (rows.length === 0) { alert('File is empty.'); return; }
       rawRows = rows;
@@ -522,7 +853,6 @@
       fileDrop.classList.add('loaded');
       document.getElementById('headerToggle').style.display = 'flex';
 
-      // Auto-guess: if any cell in row 1 is non-numeric and looks like a label word, treat as header
       const firstRow = rows[0].map(c => String(c).trim());
       const looksLikeHeader = firstRow.some(c => /^(name|phone|tel|number|mobile|email|contact|vorname|handy)/i.test(c));
       document.getElementById('hasHeader').checked = looksLikeHeader;
@@ -554,21 +884,19 @@
 
     function setupMapping() {
       const phoneCol = document.getElementById('phoneCol');
-      const nameCol = document.getElementById('nameCol');
+      const nameCol  = document.getElementById('nameCol');
       phoneCol.innerHTML = '';
-      nameCol.innerHTML = '<option value="">— None (template has no variables) —</option>';
+      nameCol.innerHTML  = '<option value="">— None (template has no variables) —</option>';
       csvColumns.forEach(col => {
         phoneCol.insertAdjacentHTML('beforeend', `<option value="${col}">${col}</option>`);
-        nameCol.insertAdjacentHTML('beforeend', `<option value="${col}">${col}</option>`);
+        nameCol.insertAdjacentHTML('beforeend',  `<option value="${col}">${col}</option>`);
       });
 
-      // Guess sensible defaults
       const phoneGuess = csvColumns.find(c => /phone|tel|number|mobile|handy|whatsapp/i.test(c));
-      const nameGuess = csvColumns.find(c => /name|first|vorname|contact/i.test(c));
+      const nameGuess  = csvColumns.find(c => /name|first|vorname|contact/i.test(c));
       if (phoneGuess) phoneCol.value = phoneGuess;
-      else if (csvColumns.length >= 2) phoneCol.value = csvColumns[1]; // default to column B
+      else if (csvColumns.length >= 2) phoneCol.value = csvColumns[1];
       if (nameGuess) nameCol.value = nameGuess;
-      // else keep name as "None" by default
 
       document.getElementById('mappingArea').style.display = 'block';
       renderPreview();
@@ -586,9 +914,9 @@
 
     function renderPreview() {
       const phoneC = document.getElementById('phoneCol').value;
-      const nameC = document.getElementById('nameCol').value;
-      const table = document.getElementById('previewTable');
-      const rows = csvData.slice(0, 5);
+      const nameC  = document.getElementById('nameCol').value;
+      const table  = document.getElementById('previewTable');
+      const rows   = csvData.slice(0, 5);
       const hasName = nameC !== '';
       let html = `<thead><tr><th>#</th>${hasName ? '<th>Name → {{variable}}</th>' : ''}<th>Phone → recipient</th></tr></thead><tbody>`;
       rows.forEach((r, i) => {
@@ -602,36 +930,30 @@
       return String(raw).replace(/[^0-9]/g, '');
     }
 
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-    }
-
-    // === Send logic ===
     async function startSend() {
       if (sending) return;
 
-      const apiKey = document.getElementById('apiKey').value.trim();
+      const apiKey       = document.getElementById('apiKey').value.trim();
       const templateName = document.getElementById('templateName').value.trim();
-      const langCode = document.getElementById('langCode').value.trim() || 'en';
-      const paramName = document.getElementById('paramName').value.trim() || 'variable_1';
-      const phoneC = document.getElementById('phoneCol').value;
-      const nameC = document.getElementById('nameCol').value;
-      const hasVariable = nameC !== '';
-      const useProxy = document.getElementById('useProxy').checked;
-      const maxRows = parseInt(document.getElementById('maxRows').value, 10) || 0;
+      const langCode     = document.getElementById('langCode').value.trim() || 'en';
+      const paramName    = document.getElementById('paramName').value.trim() || 'variable_1';
+      const phoneC       = document.getElementById('phoneCol').value;
+      const nameC        = document.getElementById('nameCol').value;
+      const hasVariable  = nameC !== '';
+      const useProxy     = document.getElementById('useProxy').checked;
+      const maxRows      = parseInt(document.getElementById('maxRows').value, 10) || 0;
 
       if (!apiKey) { alert('Enter your API key.'); return; }
       if (!templateName) { alert('Enter template name.'); return; }
       if (!csvData || csvData.length === 0) { alert('No file loaded.'); return; }
       if (maxRows < 1) { alert('Max rows must be at least 1.'); return; }
 
-      // Build the send queue: skip rows already successfully sent, respect max
       const queue = [];
       for (let i = 0; i < csvData.length; i++) {
         if (queue.length >= maxRows) break;
         const phone = cleanPhone(csvData[i][phoneC] || '');
-        if (!phone) continue; // skip empty phone rows entirely
-        if (sentPhones.has(phone)) continue; // skip already sent
+        if (!phone) continue;
+        if (sentPhones.has(phone)) continue;
         queue.push({ originalIndex: i, phone, row: csvData[i] });
       }
 
@@ -649,7 +971,7 @@
       sending = true;
       document.getElementById('sendBtn').disabled = true;
       document.getElementById('sendBtn').textContent = 'Sending…';
-      document.getElementById('stats').style.display = 'flex';
+      document.getElementById('stats').style.display   = 'flex';
       document.getElementById('results').style.display = 'block';
 
       sendStats = { total: queue.length, pending: queue.length, success: 0, error: 0 };
@@ -658,7 +980,6 @@
       const results = document.getElementById('results');
       results.innerHTML = '';
 
-      // Render initial rows
       queue.forEach((item, qi) => {
         const div = document.createElement('div');
         div.className = 'result-row';
@@ -674,7 +995,6 @@
         results.appendChild(div);
       });
 
-      // Send sequentially with small delay
       for (let qi = 0; qi < queue.length; qi++) {
         const { phone, row } = queue[qi];
         const name = hasVariable ? (row[nameC] || '') : '';
@@ -684,10 +1004,7 @@
         try {
           if (!phone || phone.length < 8) throw new Error('Invalid phone number');
 
-          const template = {
-            name: templateName,
-            language: { code: langCode }
-          };
+          const template = { name: templateName, language: { code: langCode } };
 
           if (hasVariable) {
             template.components = [
@@ -710,11 +1027,8 @@
 
           const url = useProxy ? 'https://bulksender.jadkh78.workers.dev/api/send' : 'https://waba-v2.360dialog.io/messages';
           const headers = { 'Content-Type': 'application/json' };
-          if (useProxy) {
-            headers['X-D360-Key'] = apiKey;
-          } else {
-            headers['D360-API-KEY'] = apiKey;
-          }
+          if (useProxy) headers['X-D360-Key']   = apiKey;
+          else          headers['D360-API-KEY'] = apiKey;
 
           const resp = await fetch(url, {
             method: 'POST',
@@ -727,7 +1041,7 @@
           if (resp.ok && data.messages && data.messages[0]) {
             updateRowStatus(qi, 'success', data.messages[0].id);
             sendStats.success++;
-            sentPhones.add(phone); // mark as sent so re-runs skip it
+            sentPhones.add(phone);
             updateSentDisplay();
           } else {
             const errMsg = data.error?.message || data.message || JSON.stringify(data);
@@ -741,8 +1055,6 @@
 
         sendStats.pending--;
         updateStats();
-
-        // small delay to avoid rate limits
         await sleep(250);
       }
 
@@ -763,15 +1075,238 @@
     }
 
     function updateStats() {
-      document.getElementById('statTotal').textContent = sendStats.total;
+      document.getElementById('statTotal').textContent   = sendStats.total;
       document.getElementById('statPending').textContent = sendStats.pending;
       document.getElementById('statSuccess').textContent = sendStats.success;
-      document.getElementById('statError').textContent = sendStats.error;
+      document.getElementById('statError').textContent   = sendStats.error;
     }
 
-    function sleep(ms) {
-      return new Promise(r => setTimeout(r, ms));
+    // ───────────── Dashboard ─────────────
+    const DASH_REFRESH_MS = 15000;
+    const DASH_STORAGE_KEY = 'wa_dashboard_cfg';
+
+    let dashEntries = [];
+    let dashFilter  = 'all';
+    let dashSearch  = '';
+    let dashTimer   = null;
+
+    function dashLoadConfig() {
+      try {
+        const raw = localStorage.getItem(DASH_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch { return null; }
     }
+
+    function dashSaveConfig() {
+      const url   = document.getElementById('cfgUrl').value.trim();
+      const token = document.getElementById('cfgToken').value.trim();
+      if (!url || !token) {
+        dashShowError('Both URL and token are required.');
+        return;
+      }
+      localStorage.setItem(DASH_STORAGE_KEY, JSON.stringify({ url, token }));
+      dashClearError();
+      dashStartRefresh();
+    }
+
+    function dashEndpoint(cfg) {
+      const sep = cfg.url.includes('?') ? '&' : '?';
+      return cfg.url + sep + 'token=' + encodeURIComponent(cfg.token);
+    }
+
+    async function dashFetch() {
+      const cfg = dashLoadConfig();
+      if (!cfg) return;
+
+      try {
+        const resp = await fetch(dashEndpoint(cfg), { method: 'GET' });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+
+        dashClearError();
+        dashRender(data);
+        dashUpdateMeta(true, data.generatedAt);
+      } catch (err) {
+        dashShowError('Fetch failed: ' + err.message);
+        dashUpdateMeta(false);
+      }
+    }
+
+    function dashStartRefresh() {
+      if (!dashLoadConfig()) {
+        dashUpdateMeta(false);
+        return;
+      }
+      if (dashTimer) clearInterval(dashTimer);
+      dashFetch();
+      dashTimer = setInterval(dashFetch, DASH_REFRESH_MS);
+    }
+
+    function dashStopRefresh() {
+      if (dashTimer) {
+        clearInterval(dashTimer);
+        dashTimer = null;
+      }
+    }
+
+    function dashRender(data) {
+      document.getElementById('dashStatsSection').style.display = 'block';
+      document.getElementById('dashChartSection').style.display = 'block';
+      document.getElementById('dashLogSection').style.display   = 'block';
+
+      dashRenderStats(data.stats);
+      dashRenderChart(data.daily);
+      dashEntries = data.entries || [];
+      dashRenderLog();
+    }
+
+    function dashRenderStats(s) {
+      document.getElementById('dashTotal').textContent   = s.total;
+      document.getElementById('dashSent').textContent    = s.sent;
+      document.getElementById('dashFailed').textContent  = s.failed;
+      document.getElementById('dashSkipped').textContent = s.skipped;
+      document.getElementById('dashPending').textContent = s.pending;
+
+      const attempted = s.sent + s.failed;
+      const rate = attempted > 0 ? Math.round((s.sent / attempted) * 100) : 0;
+      document.getElementById('dashRate').textContent =
+        attempted > 0 ? `${rate}% success of ${attempted} attempts` : 'No attempts yet';
+    }
+
+    function dashRenderChart(daily) {
+      const chart  = document.getElementById('dashChart');
+      const labels = document.getElementById('dashChartLabels');
+      chart.innerHTML  = '';
+      labels.innerHTML = '';
+
+      const maxVal = Math.max(1, ...daily.map(d => d.sent + d.failed));
+
+      daily.forEach(d => {
+        const col = document.createElement('div');
+        col.className = 'col';
+        col.title = `${d.day}\nSent: ${d.sent}\nFailed: ${d.failed}`;
+
+        if (d.failed > 0) {
+          const fb = document.createElement('div');
+          fb.className = 'bar failed';
+          fb.style.height = (d.failed / maxVal) * 100 + '%';
+          col.appendChild(fb);
+        }
+        if (d.sent > 0) {
+          const sb = document.createElement('div');
+          sb.className = 'bar sent';
+          sb.style.height = (d.sent / maxVal) * 100 + '%';
+          col.appendChild(sb);
+        }
+        if (d.failed === 0 && d.sent === 0) {
+          const empty = document.createElement('div');
+          empty.style.height = '2px';
+          empty.style.background = 'var(--line)';
+          col.appendChild(empty);
+        }
+        chart.appendChild(col);
+
+        const tick = document.createElement('div');
+        tick.className = 'tick';
+        tick.textContent = d.day.slice(5);
+        labels.appendChild(tick);
+      });
+    }
+
+    function dashRenderLog() {
+      const body  = document.getElementById('dashLogBody');
+      const empty = document.getElementById('dashLogEmpty');
+      const term  = dashSearch.toLowerCase();
+
+      const filtered = dashEntries.filter(e => {
+        if (dashFilter !== 'all' && e.status !== dashFilter) return false;
+        if (term) {
+          const hay = (e.name + ' ' + e.phone).toLowerCase();
+          if (!hay.includes(term)) return false;
+        }
+        return true;
+      });
+
+      document.getElementById('dashResultCount').textContent =
+        `${filtered.length} of ${dashEntries.length}`;
+
+      if (filtered.length === 0) {
+        body.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none';
+
+      body.innerHTML = filtered.map(e => `
+        <tr>
+          <td style="color: var(--muted);">${e.row}</td>
+          <td>${escapeHtml(e.name) || '<span style="color:var(--muted)">—</span>'}</td>
+          <td style="font-variant-numeric: tabular-nums;">${escapeHtml(e.phone) || '<span style="color:var(--muted)">—</span>'}</td>
+          <td><span class="status-pill ${e.status}">${e.status}</span></td>
+          <td class="detail-cell" title="${escapeHtml(e.detail)}">${escapeHtml(e.detail) || '—'}</td>
+          <td class="time-cell">${dashFormatTime(e.time)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function dashUpdateMeta(ok, generatedAt) {
+      const dot  = document.getElementById('dashDot');
+      const text = document.getElementById('dashMetaText');
+      dot.classList.toggle('live', ok);
+      if (ok) {
+        const t = generatedAt ? new Date(generatedAt) : new Date();
+        text.textContent = 'Live · last update ' + t.toLocaleTimeString();
+      } else {
+        text.textContent = dashLoadConfig() ? 'Disconnected' : 'Not connected';
+      }
+    }
+
+    function dashShowError(msg) {
+      document.getElementById('dashErrorBox').innerHTML =
+        `<div class="error-box">${escapeHtml(msg)}</div>`;
+    }
+    function dashClearError() {
+      document.getElementById('dashErrorBox').innerHTML = '';
+    }
+
+    function dashFormatTime(t) {
+      if (!t) return '—';
+      const d = new Date(t);
+      if (isNaN(d.getTime())) return t;
+      return d.toISOString().replace('T', ' ').substring(0, 19);
+    }
+
+    document.getElementById('dashFilters').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-filter]');
+      if (!btn) return;
+      dashFilter = btn.dataset.filter;
+      [...document.querySelectorAll('#dashFilters button')]
+        .forEach(b => b.classList.toggle('active', b === btn));
+      dashRenderLog();
+    });
+
+    document.getElementById('dashSearch').addEventListener('input', (e) => {
+      dashSearch = e.target.value;
+      dashRenderLog();
+    });
+
+    // ───────────── Boot ─────────────
+    (function init() {
+      // Pre-fill dashboard config inputs from localStorage so the user can see it.
+      const cfg = dashLoadConfig();
+      if (cfg) {
+        document.getElementById('cfgUrl').value   = cfg.url;
+        document.getElementById('cfgToken').value = cfg.token;
+      }
+
+      const initial = (window.location.hash || '').replace('#', '');
+      showTab(initial === 'dashboard' ? 'dashboard' : 'blaster');
+    })();
+
+    window.addEventListener('hashchange', () => {
+      const name = (window.location.hash || '').replace('#', '');
+      showTab(name === 'dashboard' ? 'dashboard' : 'blaster');
+    });
   </script>
 </body>
 </html>

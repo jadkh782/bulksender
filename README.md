@@ -8,13 +8,12 @@ Plus an automatic mode that fires a template message every time a new Google For
 
 | File | What it is |
 |---|---|
-| `public/index.html` | Browser tool — manual CSV blaster (served at `/`) |
-| `public/dashboard.html` | Live dashboard — served at `/dashboard.html` |
+| `public/index.html` | Single-page UI with two tabs: **Blaster** (manual CSV sends) and **Dashboard** (live auto-send log) |
 | `worker.js` | Cloudflare Worker — handles `/api/send` (CORS proxy) and `/api/auto-send` (webhook) |
 | `wrangler.toml` | Worker + static-assets deploy config |
-| `google-apps-script/Code.gs` | Apps Script — `onFormSubmit` trigger + `doGet` JSON endpoint for the dashboard |
+| `google-apps-script/Code.gs` | Apps Script — `onFormSubmit` trigger + `doGet` JSON endpoint for the dashboard tab |
 
-The Worker serves the static files in `public/` from the same domain. Visiting `https://<your-worker>.workers.dev/` shows the blaster UI; `/dashboard.html` shows the dashboard; `/api/*` routes to the Worker.
+The Worker serves the static UI from the same domain. Visiting `https://<your-worker>.workers.dev/` opens the blaster; switch to the Dashboard tab (or hit `/#dashboard` directly) for the live log. `/api/*` routes to the Worker.
 
 ## Deploy the Worker
 
@@ -92,7 +91,7 @@ curl -X POST https://bulksender.<your-subdomain>.workers.dev/api/auto-send \
 
 Clear the WA status cell (Column AJ) for any failed row, then run `manualProcessPending` from the Apps Script editor. It re-processes any row with a phone but no WA status.
 
-## Dashboard (`dashboard.html`)
+## Dashboard tab
 
 Live read-only view of the auto-send log. Stats, 14-day chart, filterable activity table.
 
@@ -102,9 +101,9 @@ Live read-only view of the auto-send log. Stats, 14-day chart, filterable activi
    - Execute as: **Me**
    - Who has access: **Anyone with the link**
 2. Copy the deployed `/exec` URL.
-3. Open `dashboard.html`, paste the URL and your `WEBHOOK_SECRET`, hit **Connect**. URL + token are stored in `localStorage` only.
+3. Open the Dashboard tab in `index.html`, paste the URL and your `WEBHOOK_SECRET`, hit **Connect**. URL + token are stored in `localStorage` only.
 
-The dashboard polls every 15 seconds. It reads directly from the Sheet via the `doGet` endpoint in `Code.gs` — independent of the Worker.
+The dashboard polls every 15 seconds *while the tab is active* — switching back to Blaster pauses polling. It reads directly from the Sheet via the `doGet` endpoint in `Code.gs`, independent of the Worker.
 
 ## Local development
 
