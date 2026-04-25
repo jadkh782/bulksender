@@ -328,9 +328,70 @@
     /* Dashboard config row */
     .config-row {
       display: grid;
-      grid-template-columns: 1fr 1fr auto;
+      grid-template-columns: 1.4fr 1.4fr 0.6fr auto;
       gap: 12px;
       align-items: end;
+    }
+
+    /* Bulk-send bar */
+    .bulk-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      background: #1a2010;
+      border: 1px solid var(--accent);
+      border-radius: 2px;
+      font-size: 12px;
+    }
+    .bulk-bar .count {
+      color: var(--accent);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+    .bulk-bar .grow { flex: 1; }
+    .bulk-bar button { padding: 8px 14px; font-size: 11px; }
+    .info-box {
+      padding: 12px 16px;
+      background: #0f2a14;
+      border-left: 2px solid var(--success);
+      font-size: 12px;
+      color: #8be8a3;
+      border-radius: 2px;
+      margin-bottom: 16px;
+    }
+
+    /* Per-row send button + checkbox column */
+    .row-send-btn {
+      background: var(--accent);
+      color: #000;
+      border: 0;
+      padding: 4px 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      border-radius: 2px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+    .row-send-btn:hover:not(:disabled) { background: #c9ff6b; }
+    .row-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .row-cb {
+      width: 14px; height: 14px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    .row-cb:disabled { opacity: 0.3; cursor: not-allowed; }
+    .toolbar select {
+      width: auto;
+      min-width: 160px;
+      padding: 8px 12px;
+      font-size: 12px;
     }
 
     /* Dashboard stat cards */
@@ -660,6 +721,10 @@
           <label>Webhook Secret (token)</label>
           <input type="password" id="cfgToken" placeholder="Same secret you set in Script Properties" autocomplete="off">
         </div>
+        <div>
+          <label>Start from row</label>
+          <input type="number" id="cfgFromRow" value="7091" min="2" step="1" autocomplete="off">
+        </div>
         <button onclick="dashSaveConfig()">Connect</button>
       </div>
       <p class="hint">Stored in this browser only (localStorage). Deploy <code>doGet</code> from <code>Code.gs</code> as a Web App, set <code>WEBHOOK_SECRET</code> in Script Properties, paste the URL + secret here.</p>
@@ -709,6 +774,13 @@
     <!-- Log -->
     <div class="section" id="dashLogSection" style="display:none">
       <h2>Recent activity.</h2>
+      <div id="dashSendInfo"></div>
+      <div class="bulk-bar" id="dashBulkBar" style="display:none">
+        <span class="count" id="dashSelectedCount">0 selected</span>
+        <span class="grow"></span>
+        <button id="dashSendSelectedBtn" onclick="dashSendSelected()">Send selected</button>
+        <button class="secondary" onclick="dashClearSelection()">Clear</button>
+      </div>
       <div class="toolbar">
         <div class="filters" id="dashFilters">
           <button class="secondary active" data-filter="all">All</button>
@@ -717,6 +789,7 @@
           <button class="secondary" data-filter="skipped">Skipped</button>
           <button class="secondary" data-filter="pending">Pending</button>
         </div>
+        <select id="dashGroupFilter"><option value="">All groups</option></select>
         <input type="search" id="dashSearch" placeholder="Search name or phone…">
         <span class="count" id="dashResultCount"></span>
       </div>
@@ -724,9 +797,11 @@
         <table class="log-table">
           <thead>
             <tr>
+              <th style="width: 32px;"><input type="checkbox" id="dashSelectAll" class="row-cb" onchange="dashToggleAll(this.checked)"></th>
               <th style="width: 50px;">Row</th>
               <th>Name</th>
               <th>Phone</th>
+              <th style="width: 120px;">Group</th>
               <th>Status</th>
               <th>Detail</th>
               <th style="width: 180px;">Time (UTC)</th>
@@ -1084,11 +1159,15 @@
     // ───────────── Dashboard ─────────────
     const DASH_REFRESH_MS = 15000;
     const DASH_STORAGE_KEY = 'wa_dashboard_cfg';
+    const DASH_SEND_CAP = 50;
 
-    let dashEntries = [];
-    let dashFilter  = 'all';
-    let dashSearch  = '';
-    let dashTimer   = null;
+    let dashEntries  = [];
+    let dashFilter   = 'all';
+    let dashGroup    = '';
+    let dashSearch   = '';
+    let dashSelected = new Set();   // absolute sheet row numbers
+    let dashSending  = false;
+    let dashTimer    = null;
 
     function dashLoadConfig() {
       try {
@@ -1098,21 +1177,26 @@
     }
 
     function dashSaveConfig() {
-      const url   = document.getElementById('cfgUrl').value.trim();
-      const token = document.getElementById('cfgToken').value.trim();
+      const url     = document.getElementById('cfgUrl').value.trim();
+      const token   = document.getElementById('cfgToken').value.trim();
+      const fromRow = parseInt(document.getElementById('cfgFromRow').value, 10) || 2;
       if (!url || !token) {
-        dashShowError('Both URL and token are required.');
+        dashShowError('URL and token are required.');
         return;
       }
-      localStorage.setItem(DASH_STORAGE_KEY, JSON.stringify({ url, token }));
+      localStorage.setItem(DASH_STORAGE_KEY, JSON.stringify({ url, token, fromRow }));
       dashClearError();
       dashStartRefresh();
     }
 
-    function dashEndpoint(cfg) {
-      // Proxy through the Worker — Apps Script blocks direct cross-origin fetch.
+    // Proxy through the Worker — Apps Script blocks direct cross-origin fetch.
+    function dashProxyBase(cfg) {
       return '/api/dashboard?url=' + encodeURIComponent(cfg.url) +
              '&token=' + encodeURIComponent(cfg.token);
+    }
+    function dashEndpoint(cfg) {
+      const fr = cfg.fromRow ? '&fromRow=' + encodeURIComponent(cfg.fromRow) : '';
+      return dashProxyBase(cfg) + fr;
     }
 
     async function dashFetch() {
@@ -1215,12 +1299,15 @@
     }
 
     function dashRenderLog() {
+      dashRebuildGroupFilter();
+
       const body  = document.getElementById('dashLogBody');
       const empty = document.getElementById('dashLogEmpty');
       const term  = dashSearch.toLowerCase();
 
       const filtered = dashEntries.filter(e => {
         if (dashFilter !== 'all' && e.status !== dashFilter) return false;
+        if (dashGroup && (e.group || '') !== dashGroup) return false;
         if (term) {
           const hay = (e.name + ' ' + e.phone).toLowerCase();
           if (!hay.includes(term)) return false;
@@ -1231,6 +1318,11 @@
       document.getElementById('dashResultCount').textContent =
         `${filtered.length} of ${dashEntries.length}`;
 
+      // Drop selections that fell outside the current filter / dataset.
+      const visibleRows = new Set(filtered.map(e => e.row));
+      for (const r of dashSelected) if (!visibleRows.has(r)) dashSelected.delete(r);
+      dashUpdateBulkBar();
+
       if (filtered.length === 0) {
         body.innerHTML = '';
         empty.style.display = 'block';
@@ -1238,16 +1330,134 @@
       }
       empty.style.display = 'none';
 
-      body.innerHTML = filtered.map(e => `
-        <tr>
-          <td style="color: var(--muted);">${e.row}</td>
-          <td>${escapeHtml(e.name) || '<span style="color:var(--muted)">—</span>'}</td>
-          <td style="font-variant-numeric: tabular-nums;">${escapeHtml(e.phone) || '<span style="color:var(--muted)">—</span>'}</td>
-          <td><span class="status-pill ${e.status}">${e.status}</span></td>
-          <td class="detail-cell" title="${escapeHtml(e.detail)}">${escapeHtml(e.detail) || '—'}</td>
-          <td class="time-cell">${dashFormatTime(e.time)}</td>
-        </tr>
-      `).join('');
+      body.innerHTML = filtered.map(e => {
+        const isPending = e.status === 'pending';
+        const checked   = dashSelected.has(e.row) ? 'checked' : '';
+        const cb = isPending
+          ? `<input type="checkbox" class="row-cb" data-row="${e.row}" ${checked}>`
+          : `<input type="checkbox" class="row-cb" disabled>`;
+        const sendBtn = isPending
+          ? `<button class="row-send-btn" data-row="${e.row}" ${dashSending ? 'disabled' : ''}>Send</button>`
+          : '';
+        return `
+          <tr>
+            <td>${cb}</td>
+            <td style="color: var(--muted);">${e.row}</td>
+            <td>${escapeHtml(e.name) || '<span style="color:var(--muted)">—</span>'}</td>
+            <td style="font-variant-numeric: tabular-nums;">${escapeHtml(e.phone) || '<span style="color:var(--muted)">—</span>'}</td>
+            <td>${escapeHtml(e.group) || '<span style="color:var(--muted)">—</span>'}</td>
+            <td><span class="status-pill ${e.status}">${e.status}</span>${sendBtn}</td>
+            <td class="detail-cell" title="${escapeHtml(e.detail)}">${escapeHtml(e.detail) || '—'}</td>
+            <td class="time-cell">${dashFormatTime(e.time)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      // Keep header "select all" in sync.
+      const pendingFiltered = filtered.filter(e => e.status === 'pending');
+      const allSelected = pendingFiltered.length > 0 &&
+        pendingFiltered.every(e => dashSelected.has(e.row));
+      document.getElementById('dashSelectAll').checked = allSelected;
+    }
+
+    function dashRebuildGroupFilter() {
+      const sel = document.getElementById('dashGroupFilter');
+      const groups = [...new Set(dashEntries.map(e => (e.group || '').trim()).filter(Boolean))].sort();
+      const current = dashGroup;
+      sel.innerHTML = '<option value="">All groups</option>' +
+        groups.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+      // Preserve current selection if still present.
+      sel.value = groups.includes(current) ? current : '';
+      dashGroup = sel.value;
+    }
+
+    function dashFilteredPending() {
+      const term = dashSearch.toLowerCase();
+      return dashEntries.filter(e => {
+        if (e.status !== 'pending') return false;
+        if (dashFilter !== 'all' && dashFilter !== 'pending') return false;
+        if (dashGroup && (e.group || '') !== dashGroup) return false;
+        if (term) {
+          const hay = (e.name + ' ' + e.phone).toLowerCase();
+          if (!hay.includes(term)) return false;
+        }
+        return true;
+      });
+    }
+
+    function dashToggleAll(checked) {
+      const pending = dashFilteredPending();
+      if (checked) pending.forEach(e => dashSelected.add(e.row));
+      else         pending.forEach(e => dashSelected.delete(e.row));
+      dashRenderLog();
+    }
+
+    function dashClearSelection() {
+      dashSelected.clear();
+      dashRenderLog();
+    }
+
+    function dashUpdateBulkBar() {
+      const bar = document.getElementById('dashBulkBar');
+      const n   = dashSelected.size;
+      bar.style.display = n > 0 ? 'flex' : 'none';
+      document.getElementById('dashSelectedCount').textContent = `${n} selected`;
+      document.getElementById('dashSendSelectedBtn').disabled = dashSending || n === 0;
+      document.getElementById('dashSendSelectedBtn').textContent =
+        dashSending ? 'Sending…' : `Send selected (${n})`;
+    }
+
+    function dashSendSelected() {
+      dashSendRows([...dashSelected]);
+    }
+
+    async function dashSendRows(rows) {
+      if (dashSending) return;
+      if (!rows || rows.length === 0) return;
+      if (rows.length > DASH_SEND_CAP) {
+        alert(`Cap is ${DASH_SEND_CAP} rows per click. Narrow the filter and try again.`);
+        return;
+      }
+      const cfg = dashLoadConfig();
+      if (!cfg) { dashShowError('Connect first.'); return; }
+      if (!confirm(`Send WhatsApp template to ${rows.length} pending row(s)?`)) return;
+
+      dashSending = true;
+      dashStopRefresh();
+      dashUpdateBulkBar();
+      // Disable inline Send buttons in flight.
+      document.querySelectorAll('.row-send-btn').forEach(b => b.disabled = true);
+      dashShowInfo(`Sending ${rows.length} message(s)…`);
+
+      try {
+        const resp = await fetch(dashProxyBase(cfg), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'send', rows })
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+
+        const sent    = (data.results || []).filter(r => r.status === 'sent').length;
+        const failed  = (data.results || []).filter(r => r.status === 'failed').length;
+        const skipped = (data.results || []).filter(r => r.status === 'skipped').length;
+        dashShowInfo(`Done — ${sent} sent · ${failed} failed · ${skipped} skipped`);
+        dashSelected.clear();
+      } catch (err) {
+        dashShowError('Send failed: ' + err.message);
+      } finally {
+        dashSending = false;
+        await dashFetch();
+        dashStartRefresh();
+      }
+    }
+
+    function dashShowInfo(msg) {
+      document.getElementById('dashSendInfo').innerHTML =
+        `<div class="info-box">${escapeHtml(msg)}</div>`;
+    }
+    function dashClearInfo() {
+      document.getElementById('dashSendInfo').innerHTML = '';
     }
 
     function dashUpdateMeta(ok, generatedAt) {
@@ -1286,9 +1496,33 @@
       dashRenderLog();
     });
 
+    document.getElementById('dashGroupFilter').addEventListener('change', (e) => {
+      dashGroup = e.target.value;
+      dashRenderLog();
+    });
+
     document.getElementById('dashSearch').addEventListener('input', (e) => {
       dashSearch = e.target.value;
       dashRenderLog();
+    });
+
+    // Per-row checkbox + Send button (delegated).
+    document.getElementById('dashLogBody').addEventListener('change', (e) => {
+      const cb = e.target.closest('input.row-cb[data-row]');
+      if (!cb) return;
+      const row = parseInt(cb.dataset.row, 10);
+      if (cb.checked) dashSelected.add(row);
+      else            dashSelected.delete(row);
+      dashUpdateBulkBar();
+      // Update header select-all without re-rendering rows.
+      const pending = dashFilteredPending();
+      document.getElementById('dashSelectAll').checked =
+        pending.length > 0 && pending.every(p => dashSelected.has(p.row));
+    });
+    document.getElementById('dashLogBody').addEventListener('click', (e) => {
+      const btn = e.target.closest('button.row-send-btn[data-row]');
+      if (!btn) return;
+      dashSendRows([parseInt(btn.dataset.row, 10)]);
     });
 
     // ───────────── Boot ─────────────
@@ -1296,8 +1530,9 @@
       // Pre-fill dashboard config inputs from localStorage so the user can see it.
       const cfg = dashLoadConfig();
       if (cfg) {
-        document.getElementById('cfgUrl').value   = cfg.url;
-        document.getElementById('cfgToken').value = cfg.token;
+        document.getElementById('cfgUrl').value     = cfg.url;
+        document.getElementById('cfgToken').value   = cfg.token;
+        if (cfg.fromRow) document.getElementById('cfgFromRow').value = cfg.fromRow;
       }
 
       const initial = (window.location.hash || '').replace('#', '');

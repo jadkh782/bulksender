@@ -21,7 +21,7 @@ const D360_URL = 'https://waba-v2.360dialog.io/messages';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-D360-Key',
   'Access-Control-Max-Age': '86400'
 };
@@ -168,10 +168,12 @@ async function handleAutoSend(request, env) {
   }
 }
 
-// Server-side proxy for the dashboard's call to Apps Script. Browsers can't
+// Server-side proxy for the dashboard's calls to Apps Script. Browsers can't
 // reliably fetch script.google.com/.../exec cross-origin; the Worker can.
+// Forwards extra query params (e.g. fromRow) and POST bodies verbatim.
 async function handleDashboard(request) {
-  const params = new URL(request.url).searchParams;
+  const inUrl  = new URL(request.url);
+  const params = inUrl.searchParams;
   const target = params.get('url');
   const token  = params.get('token') || '';
 
@@ -179,13 +181,25 @@ async function handleDashboard(request) {
     return json({ error: 'Invalid or missing Apps Script url' }, 400, CORS);
   }
 
-  const sep = target.includes('?') ? '&' : '?';
-  const upstreamUrl = target + sep + 'token=' + encodeURIComponent(token);
+  // Pass through every query param except `url` (already consumed); rebuild
+  // the upstream URL so optional things like fromRow flow through.
+  const upstream = new URL(target);
+  for (const [k, v] of params) {
+    if (k === 'url') continue;
+    upstream.searchParams.set(k, v);
+  }
+  if (token) upstream.searchParams.set('token', token);
+
+  const init = { method: request.method, redirect: 'follow' };
+  if (request.method === 'POST') {
+    init.headers = { 'Content-Type': request.headers.get('content-type') || 'application/json' };
+    init.body    = await request.text();
+  }
 
   try {
-    const upstream = await fetch(upstreamUrl, { redirect: 'follow' });
-    return new Response(await upstream.text(), {
-      status: upstream.status,
+    const resp = await fetch(upstream.toString(), init);
+    return new Response(await resp.text(), {
+      status: resp.status,
       headers: { ...CORS, 'Content-Type': 'application/json' }
     });
   } catch (err) {

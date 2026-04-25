@@ -141,16 +141,20 @@ function manualProcessPending() {
   Logger.log('Processed ' + processed + ' rows');
 }
 
+// Column G holds the lead's category/group; surfaced in the dashboard for filtering.
+var GROUP_COL = 7;
+
 /**
  * Web-app endpoint for the dashboard.
  *
  * Deploy: Apps Script editor > Deploy > New deployment
  *   Type: Web app
  *   Execute as: Me
- *   Who has access: Anyone with the link
+ *   Who has access: Anyone
  *
- * Auth: caller must pass ?token=<WEBHOOK_SECRET> matching the Script Property.
- * Returns JSON: { stats, daily, entries }.
+ * Auth:    caller must pass ?token=<WEBHOOK_SECRET> matching the Script Property.
+ * Params:  ?fromRow=<n>  (optional, default 2) — skip rows before <n>
+ * Returns: { stats, daily, entries: [{ row, name, phone, group, status, detail, time }] }
  */
 function doGet(e) {
   var props  = PropertiesService.getScriptProperties();
@@ -164,22 +168,27 @@ function doGet(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('new LEADS');
   if (!sheet) return _json({ error: 'Sheet "new LEADS" not found' });
 
+  var fromRow = parseInt((e && e.parameter && e.parameter.fromRow) || '2', 10);
+  if (isNaN(fromRow) || fromRow < 2) fromRow = 2;
+
   var lastRow = sheet.getLastRow();
   var stats   = { total: 0, sent: 0, failed: 0, skipped: 0, pending: 0 };
   var entries = [];
   var byDay   = {};
 
-  if (lastRow >= 2) {
-    var n          = lastRow - 1;
-    var firstNames = sheet.getRange(2, FIRST_NAME_COL, n, 1).getValues();
-    var phones     = sheet.getRange(2, PHONE_COL,      n, 1).getValues();
-    var statuses   = sheet.getRange(2, WA_STATUS_COL,  n, 1).getValues();
-    var times      = sheet.getRange(2, WA_TIME_COL,    n, 1).getValues();
+  if (lastRow >= fromRow) {
+    var n          = lastRow - fromRow + 1;
+    var firstNames = sheet.getRange(fromRow, FIRST_NAME_COL, n, 1).getValues();
+    var phones     = sheet.getRange(fromRow, PHONE_COL,      n, 1).getValues();
+    var groups     = sheet.getRange(fromRow, GROUP_COL,      n, 1).getValues();
+    var statuses   = sheet.getRange(fromRow, WA_STATUS_COL,  n, 1).getValues();
+    var times      = sheet.getRange(fromRow, WA_TIME_COL,    n, 1).getValues();
 
     for (var i = 0; i < n; i++) {
-      var phone  = String(phones[i][0] || '').trim();
+      var phone  = String(phones[i][0]     || '').trim();
       var name   = String(firstNames[i][0] || '').trim();
-      var status = String(statuses[i][0] || '').trim();
+      var group  = String(groups[i][0]     || '').trim();
+      var status = String(statuses[i][0]   || '').trim();
       var time   = times[i][0] ? String(times[i][0]).trim() : '';
 
       if (!phone && !status && !name) continue;
@@ -211,12 +220,13 @@ function doGet(e) {
       }
 
       entries.push({
-        row: i + 2,
-        name: name,
-        phone: phone,
+        row:    fromRow + i,
+        name:   name,
+        phone:  phone,
+        group:  group,
         status: category,
         detail: detail,
-        time: time
+        time:   time
       });
     }
   }
@@ -246,6 +256,100 @@ function doGet(e) {
     entries: entries.slice(0, 200),
     generatedAt: new Date().toISOString()
   });
+}
+
+/**
+ * Web-app POST endpoint — triggers a 360dialog send for a list of pending rows.
+ * Body: { action: "send", rows: [<absolute sheet row>, ...] }
+ * Hard-capped at 50 rows per call so we stay under Apps Script's execution limit.
+ */
+var SEND_BATCH_CAP = 50;
+
+function doPost(e) {
+  var props  = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('WEBHOOK_SECRET');
+  var url    = props.getProperty('WEBHOOK_URL');
+  var token  = (e && e.parameter && e.parameter.token) || '';
+
+  if (!secret || token !== secret) return _json({ error: 'Unauthorized' });
+  if (!url)                        return _json({ error: 'WEBHOOK_URL missing in Script Properties' });
+
+  var body;
+  try {
+    body = JSON.parse((e.postData && e.postData.contents) || '{}');
+  } catch (err) {
+    return _json({ error: 'Invalid JSON body' });
+  }
+
+  if (body.action !== 'send' || !Array.isArray(body.rows) || body.rows.length === 0) {
+    return _json({ error: 'Expected { action: "send", rows: [number, ...] }' });
+  }
+
+  var rows = body.rows.slice(0, SEND_BATCH_CAP).map(function(r) { return parseInt(r, 10); })
+                      .filter(function(r) { return !isNaN(r) && r >= 2; });
+  if (rows.length === 0) return _json({ error: 'No valid rows' });
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('new LEADS');
+  if (!sheet) return _json({ error: 'Sheet "new LEADS" not found' });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return _json({ error: 'Another send is already running' });
+
+  var results = [];
+
+  try {
+    for (var i = 0; i < rows.length; i++) {
+      results.push(_sendRow(sheet, rows[i], url, secret));
+      if (i < rows.length - 1) Utilities.sleep(300);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
+  return _json({ results: results });
+}
+
+// Sends one row through WEBHOOK_URL and writes the outcome back to the sheet.
+// Returns { row, status: 'sent'|'failed'|'skipped', detail }.
+function _sendRow(sheet, row, url, secret) {
+  var phone     = String(sheet.getRange(row, PHONE_COL).getValue()).trim();
+  var firstName = String(sheet.getRange(row, FIRST_NAME_COL).getValue()).trim();
+  var now       = new Date().toISOString();
+
+  if (!phone) {
+    sheet.getRange(row, WA_STATUS_COL).setValue('WA_SKIPPED: no phone');
+    sheet.getRange(row, WA_TIME_COL).setValue(now);
+    return { row: row, status: 'skipped', detail: 'no phone' };
+  }
+
+  try {
+    var response = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'Authorization': 'Bearer ' + secret },
+      payload: JSON.stringify({ phone: phone, name: firstName }),
+      muteHttpExceptions: true
+    });
+
+    var httpCode = response.getResponseCode();
+    var result   = JSON.parse(response.getContentText());
+
+    if (httpCode === 200 && result.success) {
+      var id = result.messageId || 'ok';
+      sheet.getRange(row, WA_STATUS_COL).setValue('WA_SENT: ' + id);
+      sheet.getRange(row, WA_TIME_COL).setValue(now);
+      return { row: row, status: 'sent', detail: id };
+    }
+
+    var err = result.error || ('HTTP ' + httpCode);
+    sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err);
+    sheet.getRange(row, WA_TIME_COL).setValue(now);
+    return { row: row, status: 'failed', detail: err };
+  } catch (err) {
+    sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err.message);
+    sheet.getRange(row, WA_TIME_COL).setValue(now);
+    return { row: row, status: 'failed', detail: err.message };
+  }
 }
 
 function _json(obj) {
