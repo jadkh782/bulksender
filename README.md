@@ -2,95 +2,109 @@
 
 Single-page tool for sending templated WhatsApp messages to a list of contacts via 360dialog's Cloud API. Paste your API key, drop a CSV, map the columns, fire.
 
-## Deploy
+Plus an automatic mode that fires a template message every time a new Google Form submission lands in your Sheet, and a dashboard that shows live send stats.
 
-**Fastest path:**
-1. Create a new GitHub repo, commit both files (`index.html` and `api/send.js`)
-2. Import the repo on [vercel.com/new](https://vercel.com/new)
-3. Deploy (no config needed)
+## Pieces
 
-Or drag the whole folder onto Vercel's drag-and-drop deploy.
+| File | What it is |
+|---|---|
+| `index.html` | Browser tool — manual CSV blaster |
+| `dashboard.html` | Live dashboard — reads send log from your Sheet |
+| `worker.js` | Cloudflare Worker — serves `/api/send` (CORS proxy) and `/api/auto-send` (webhook) |
+| `wrangler.toml` | Worker deploy config |
+| `google-apps-script/Code.gs` | Apps Script — `onFormSubmit` trigger + `doGet` JSON endpoint for the dashboard |
 
-## Usage
+## Deploy the Worker
 
-1. Open your deployed URL
-2. Paste your 360dialog API key (stays in browser memory only)
-3. Upload a CSV — Name and Phone columns will be auto-guessed
-4. Adjust the column mapping if needed
-5. Enter your approved template name, language code, and variable name
-6. Click Start Sending
+1. Install Wrangler: `npm i -g wrangler`
+2. From this folder: `wrangler login`
+3. Set the secrets:
+   ```
+   wrangler secret put D360_API_KEY
+   wrangler secret put WEBHOOK_SECRET
+   ```
+4. (Optional) Edit `wrangler.toml` `[vars]` to override `TEMPLATE_NAME`, `TEMPLATE_LANG`, `TEMPLATE_PARAM_NAME` — or set them in the Cloudflare dashboard.
+5. Deploy: `wrangler deploy`
 
-## CORS fallback
+You'll get a URL like `https://bulksender.<your-subdomain>.workers.dev`. Both endpoints live there:
+- `POST /api/send` — CORS proxy for `index.html`
+- `POST /api/auto-send` — webhook for Apps Script
 
-If the browser blocks the direct API call to 360dialog, tick the **"Route via /api/send"** checkbox. That routes your request through the bundled Vercel serverless proxy (`api/send.js`) which forwards it server-side — CORS-free.
+## Manual mode (`index.html`)
 
-The proxy doesn't store your API key. It just reads it from the `X-D360-Key` header, makes the upstream call, and returns the response.
+1. Open `index.html` in a browser (or host it on Cloudflare Pages).
+2. Paste your 360dialog API key (stays in browser memory only).
+3. Upload a CSV — Name and Phone columns are auto-guessed.
+4. Adjust column mapping if needed.
+5. Enter your approved template name, language, and variable name.
+6. Click **Start Sending**.
 
-## Notes
+### CORS fallback
 
-- Phone numbers are auto-stripped of `+`, spaces, and parens before sending
-- Requests are sequential with a 250ms delay between each, to stay clear of rate limits
-- Template variables assume **named parameters** (e.g. `parameter_name: "variable_1"`). If your template uses positional variables, you'll need to edit the payload builder in `index.html`
-- Nothing is stored. Close the tab = key and CSV are gone.
+If browser-direct calls to 360dialog get blocked by CORS, tick **"Route via /api/send"**. The request goes through your deployed Worker instead. The Worker reads your key from the `X-D360-Key` header, calls 360dialog, returns the response. Nothing is stored.
 
-## Automatic Mode (Google Sheets)
+The toggle uses the path `/api/send` (relative). If you open `index.html` from `file://` or a domain different from the Worker, change `/api/send` in `index.html` to your full Worker URL.
 
-Send a WhatsApp template message automatically every time a new Google Form submission lands in your Sheet.
+### Notes
 
-### How it works
+- Phone numbers are auto-stripped of `+`, spaces, and parens before sending.
+- Sends are sequential with a 250ms delay between each, to stay clear of rate limits.
+- Template variables assume **named parameters** (e.g. `parameter_name: "variable_1"`). Edit the payload builder in `index.html` if you use positional variables.
+
+## Automatic mode (Google Sheets)
 
 ```
 Google Form submitted
   → new row in "new LEADS" sheet
-  → Apps Script fires onFormSubmit trigger
-  → POSTs phone + name to /api/auto-send
-  → Vercel calls 360dialog API
-  → Script writes WA_SENT / WA_FAILED back to the row
+  → Apps Script fires onFormSubmit
+  → POSTs phone + name to <worker>/api/auto-send
+  → Worker calls 360dialog
+  → Apps Script writes WA_SENT / WA_FAILED to the row
 ```
 
-### Step 1: Vercel environment variables
+### Apps Script setup
 
-In your Vercel dashboard → Project Settings → Environment Variables, add:
+1. Open your Google Sheet → **Extensions → Apps Script**.
+2. Delete the default code, paste the contents of `google-apps-script/Code.gs`.
+3. **Project Settings → Script Properties**, add:
+   - `WEBHOOK_URL` = `https://bulksender.<your-subdomain>.workers.dev/api/auto-send`
+   - `WEBHOOK_SECRET` = the same value you `wrangler secret put` for the Worker
+4. Back in the editor, select **`setupTrigger`** from the dropdown and click **Run**. Authorize when prompted.
 
-| Variable | Value |
-|---|---|
-| `D360_API_KEY` | Your 360dialog API key |
-| `WEBHOOK_SECRET` | A random secret string (e.g. run `openssl rand -hex 32`) |
-| `TEMPLATE_NAME` | Your approved WhatsApp template name |
-| `TEMPLATE_LANG` | Language code, e.g. `en` or `ar` |
-| `TEMPLATE_PARAM_NAME` | Named parameter in the template (e.g. `variable_1`), or leave empty if no variables |
-
-Then redeploy so the new `api/auto-send.js` endpoint goes live.
-
-### Step 2: Google Apps Script
-
-1. Open your Google Sheet → **Extensions → Apps Script**
-2. Delete the default code and paste the contents of `google-apps-script/Code.gs`
-3. Go to **Project Settings** (gear icon) → **Script Properties** and add:
-   - `WEBHOOK_URL` = `https://your-app.vercel.app/api/auto-send`
-   - `WEBHOOK_SECRET` = the same secret you set in Vercel
-4. Back in the editor, select **`setupTrigger`** from the function dropdown and click **Run**
-5. Authorize the script when prompted (it needs permission to access the Sheet and make HTTP requests)
-
-### Step 3: Test
+### Test
 
 Submit your Google Form. Within a few seconds the new row should show:
 - Column AJ: `WA_SENT: <message-id>` or `WA_FAILED: <reason>`
-- Column AK: Timestamp of when the send was attempted
+- Column AK: timestamp
 
-### Retrying failed sends
-
-Clear the WA status cell (Column AJ) for any failed row, then run `manualProcessPending` from the Apps Script editor. It will re-process all rows that have a phone number but no WA status.
-
-### Testing the webhook directly
+### Test the webhook directly
 
 ```bash
-curl -X POST https://your-app.vercel.app/api/auto-send \
+curl -X POST https://bulksender.<your-subdomain>.workers.dev/api/auto-send \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_WEBHOOK_SECRET" \
   -d '{"phone": "+491234567890", "name": "Test"}'
 ```
 
-## Local testing
+### Retrying failed sends
 
-Just open `index.html` in a browser. The proxy won't work locally unless you run `vercel dev`, but direct mode is fine for testing the UI.
+Clear the WA status cell (Column AJ) for any failed row, then run `manualProcessPending` from the Apps Script editor. It re-processes any row with a phone but no WA status.
+
+## Dashboard (`dashboard.html`)
+
+Live read-only view of the auto-send log. Stats, 14-day chart, filterable activity table.
+
+### Setup
+
+1. In the Apps Script editor: **Deploy → New deployment → Web app**
+   - Execute as: **Me**
+   - Who has access: **Anyone with the link**
+2. Copy the deployed `/exec` URL.
+3. Open `dashboard.html`, paste the URL and your `WEBHOOK_SECRET`, hit **Connect**. URL + token are stored in `localStorage` only.
+
+The dashboard polls every 15 seconds. It reads directly from the Sheet via the `doGet` endpoint in `Code.gs` — independent of the Worker.
+
+## Local development
+
+- Run the Worker locally: `wrangler dev` (uses `.dev.vars` for secrets — gitignored).
+- Open `index.html` directly. Direct mode (no proxy) works without a server. Proxy mode requires `wrangler dev` and updating the path if the dev server isn't on the same origin.

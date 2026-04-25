@@ -1,0 +1,15 @@
+name = "bulksender"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+# Non-secret config. Edit values here or override via the Cloudflare dashboard.
+[vars]
+TEMPLATE_NAME = "welcome_message"
+TEMPLATE_LANG = "ar"
+TEMPLATE_PARAM_NAME = ""
+
+# Secrets are NOT defined here. Set them with:
+#   wrangler secret put D360_API_KEY
+#   wrangler secret put WEBHOOK_SECRET
+#
+# For local `wrangler dev`, put the same values in .dev.vars (gitignored).
