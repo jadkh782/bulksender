@@ -1356,7 +1356,7 @@
     }
 
     function dashRenderAuto(auto) {
-      auto = auto || { enabled: false, intervalMin: 0, retryOnce: false, lastTick: '' };
+      auto = auto || { enabled: false, intervalMin: 0, retryOnce: false, lastTick: '', haltReason: '' };
       // Don't clobber controls while the user is mid-edit (Apply not yet clicked).
       if (!dashAutoDirty) {
         document.getElementById('dashAutoInterval').value =
@@ -1364,12 +1364,19 @@
         document.getElementById('dashAutoRetry').checked = !!auto.retryOnce;
       }
       var stateEl = document.getElementById('dashAutoState');
-      if (!auto.enabled) {
+      if (auto.haltReason) {
+        var when = auto.haltAt ? new Date(auto.haltAt).toLocaleString() : '';
+        stateEl.innerHTML = '<strong style="color:var(--error)">PAUSED</strong> — ' +
+          escapeHtml(auto.haltReason) +
+          (when ? ' <span style="color:var(--muted)">(' + escapeHtml(when) + ')</span>' : '') +
+          '<br><span style="color:var(--muted); font-size:11px;">Top up the account, then pick a cadence and Apply to resume.</span>';
+        stateEl.style.color = 'var(--error)';
+      } else if (!auto.enabled) {
         stateEl.textContent = 'Off';
         stateEl.style.color = 'var(--muted)';
       } else {
-        var when = auto.lastTick ? new Date(auto.lastTick).toLocaleTimeString() : 'no tick yet';
-        stateEl.textContent = 'Running every ' + auto.intervalMin + 'm · last tick ' + when;
+        var lt = auto.lastTick ? new Date(auto.lastTick).toLocaleTimeString() : 'no tick yet';
+        stateEl.textContent = 'Running every ' + auto.intervalMin + 'm · last tick ' + lt;
         stateEl.style.color = 'var(--success)';
       }
     }

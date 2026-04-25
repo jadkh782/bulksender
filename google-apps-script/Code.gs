@@ -275,7 +275,9 @@ function _autoSendStatus(props) {
     enabled:     props.getProperty('AUTO_SEND_ENABLED') === '1',
     intervalMin: parseInt(props.getProperty('AUTO_SEND_INTERVAL_MIN') || '0', 10) || 0,
     retryOnce:   props.getProperty('AUTO_SEND_RETRY') === '1',
-    lastTick:    props.getProperty('AUTO_SEND_LAST_TICK') || ''
+    lastTick:    props.getProperty('AUTO_SEND_LAST_TICK')   || '',
+    haltReason:  props.getProperty('AUTO_SEND_HALT_REASON') || '',
+    haltAt:      props.getProperty('AUTO_SEND_HALT_AT')     || ''
   };
 }
 
@@ -365,19 +367,43 @@ function _sendRow(sheet, row, url, secret) {
       var id = result.messageId || 'ok';
       sheet.getRange(row, WA_STATUS_COL).setValue('WA_SENT: ' + id);
       sheet.getRange(row, WA_TIME_COL).setValue(now);
-      return { row: row, status: 'sent', detail: id };
+      return { row: row, status: 'sent', detail: id, httpCode: httpCode };
     }
 
     var err = result.error
             || ('HTTP ' + httpCode + (raw ? ' — ' + raw.substring(0, 120) : ' — empty body'));
     sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err);
     sheet.getRange(row, WA_TIME_COL).setValue(now);
-    return { row: row, status: 'failed', detail: err };
+    return { row: row, status: 'failed', detail: err, httpCode: httpCode };
   } catch (err) {
     sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err.message);
     sheet.getRange(row, WA_TIME_COL).setValue(now);
-    return { row: row, status: 'failed', detail: err.message };
+    return { row: row, status: 'failed', detail: err.message, httpCode: 0 };
   }
+}
+
+// Heuristic: does this error indicate an account-level problem that will keep
+// failing every subsequent row? If yes, the auto loop pauses itself instead
+// of churning through the queue marking everything WA_FAILED.
+//
+// Halt signals:
+//   - HTTP 401/402/403 (auth revoked, payment required, account suspended)
+//   - Detail contains keywords pointing at billing / quota / suspension
+function _isAccountFatal(httpCode, detail) {
+  if (httpCode === 401 || httpCode === 402 || httpCode === 403) return true;
+  var d = String(detail || '').toLowerCase();
+  if (!d) return false;
+  var keywords = [
+    'balance', 'insufficient', 'no funds', 'out of funds', 'no credit',
+    'out of credit', 'credit exhausted', 'insufficient credit',
+    'payment required', 'billing', 'quota exceeded', 'quota_exceeded',
+    'account suspended', 'account_suspended', 'messaging limit',
+    'spend cap', 'wallet'
+  ];
+  for (var i = 0; i < keywords.length; i++) {
+    if (d.indexOf(keywords[i]) !== -1) return true;
+  }
+  return false;
 }
 
 function _json(obj) {
@@ -406,6 +432,12 @@ function _handleConfigureAuto(body, props) {
   props.setProperty('AUTO_SEND_ENABLED',      enabled ? '1' : '0');
   props.setProperty('AUTO_SEND_INTERVAL_MIN', enabled ? String(intervalMin) : '0');
   props.setProperty('AUTO_SEND_RETRY',        retryOnce ? '1' : '0');
+
+  // Re-enabling clears any prior halt — user has acknowledged it.
+  if (enabled) {
+    props.deleteProperty('AUTO_SEND_HALT_REASON');
+    props.deleteProperty('AUTO_SEND_HALT_AT');
+  }
 
   installAutoSendTrigger(enabled ? intervalMin : 0);
 
@@ -472,18 +504,35 @@ function autoSendTick() {
       }
     }
 
-    var sent = 0, failed = 0, skipped = 0;
+    var sent = 0, failed = 0, skipped = 0, halted = false, haltReason = '';
     for (var p = 0; p < picks.length; p++) {
       var r = _sendRowAuto(sheet, picks[p].row, url, secret, picks[p].isRetry);
       if      (r.status === 'sent')    sent++;
       else if (r.status === 'failed')  failed++;
       else if (r.status === 'skipped') skipped++;
+
+      if (r.status === 'failed' && _isAccountFatal(r.httpCode, r.detail)) {
+        halted = true;
+        haltReason = (r.httpCode ? 'HTTP ' + r.httpCode + ' — ' : '') + r.detail;
+        break;
+      }
+
       if (p < picks.length - 1) Utilities.sleep(300);
     }
 
     props.setProperty('AUTO_SEND_LAST_TICK', new Date().toISOString());
-    Logger.log('autoSendTick: ' + picks.length + ' picked · ' +
-               sent + ' sent · ' + failed + ' failed · ' + skipped + ' skipped');
+
+    if (halted) {
+      props.setProperty('AUTO_SEND_ENABLED', '0');
+      props.setProperty('AUTO_SEND_HALT_REASON', haltReason.substring(0, 300));
+      props.setProperty('AUTO_SEND_HALT_AT',     new Date().toISOString());
+      installAutoSendTrigger(0);
+      Logger.log('autoSendTick: HALTED (' + haltReason + ') after ' +
+                 sent + ' sent · ' + failed + ' failed');
+    } else {
+      Logger.log('autoSendTick: ' + picks.length + ' picked · ' +
+                 sent + ' sent · ' + failed + ' failed · ' + skipped + ' skipped');
+    }
   } finally {
     lock.releaseLock();
   }
