@@ -142,6 +142,119 @@ function manualProcessPending() {
 }
 
 /**
+ * Web-app endpoint for the dashboard.
+ *
+ * Deploy: Apps Script editor > Deploy > New deployment
+ *   Type: Web app
+ *   Execute as: Me
+ *   Who has access: Anyone with the link
+ *
+ * Auth: caller must pass ?token=<WEBHOOK_SECRET> matching the Script Property.
+ * Returns JSON: { stats, daily, entries }.
+ */
+function doGet(e) {
+  var props  = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('WEBHOOK_SECRET');
+  var token  = (e && e.parameter && e.parameter.token) || '';
+
+  if (!secret || token !== secret) {
+    return _json({ error: 'Unauthorized' });
+  }
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('new LEADS');
+  if (!sheet) return _json({ error: 'Sheet "new LEADS" not found' });
+
+  var lastRow = sheet.getLastRow();
+  var stats   = { total: 0, sent: 0, failed: 0, skipped: 0, pending: 0 };
+  var entries = [];
+  var byDay   = {};
+
+  if (lastRow >= 2) {
+    var n          = lastRow - 1;
+    var firstNames = sheet.getRange(2, FIRST_NAME_COL, n, 1).getValues();
+    var phones     = sheet.getRange(2, PHONE_COL,      n, 1).getValues();
+    var statuses   = sheet.getRange(2, WA_STATUS_COL,  n, 1).getValues();
+    var times      = sheet.getRange(2, WA_TIME_COL,    n, 1).getValues();
+
+    for (var i = 0; i < n; i++) {
+      var phone  = String(phones[i][0] || '').trim();
+      var name   = String(firstNames[i][0] || '').trim();
+      var status = String(statuses[i][0] || '').trim();
+      var time   = times[i][0] ? String(times[i][0]).trim() : '';
+
+      if (!phone && !status && !name) continue;
+
+      stats.total++;
+
+      var category = 'pending';
+      var detail   = '';
+      if (status.indexOf('WA_SENT') === 0) {
+        category = 'sent';
+        stats.sent++;
+        detail = status.replace(/^WA_SENT:\s*/, '');
+      } else if (status.indexOf('WA_FAILED') === 0) {
+        category = 'failed';
+        stats.failed++;
+        detail = status.replace(/^WA_FAILED:\s*/, '');
+      } else if (status.indexOf('WA_SKIPPED') === 0) {
+        category = 'skipped';
+        stats.skipped++;
+        detail = status.replace(/^WA_SKIPPED:\s*/, '');
+      } else {
+        stats.pending++;
+      }
+
+      if (time && (category === 'sent' || category === 'failed')) {
+        var day = time.substring(0, 10);
+        if (!byDay[day]) byDay[day] = { sent: 0, failed: 0 };
+        byDay[day][category]++;
+      }
+
+      entries.push({
+        row: i + 2,
+        name: name,
+        phone: phone,
+        status: category,
+        detail: detail,
+        time: time
+      });
+    }
+  }
+
+  entries.sort(function(a, b) {
+    if (!a.time && !b.time) return b.row - a.row;
+    if (!a.time) return 1;
+    if (!b.time) return -1;
+    return b.time < a.time ? -1 : (b.time > a.time ? 1 : 0);
+  });
+
+  var daily = [];
+  var today = new Date();
+  for (var d = 13; d >= 0; d--) {
+    var t   = new Date(today.getTime() - d * 86400000);
+    var key = t.toISOString().substring(0, 10);
+    daily.push({
+      day: key,
+      sent: byDay[key] ? byDay[key].sent : 0,
+      failed: byDay[key] ? byDay[key].failed : 0
+    });
+  }
+
+  return _json({
+    stats: stats,
+    daily: daily,
+    entries: entries.slice(0, 200),
+    generatedAt: new Date().toISOString()
+  });
+}
+
+function _json(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
  * One-time setup: installs the onFormSubmit trigger.
  * Run this once from the Apps Script editor: select setupTrigger > Run.
  * You will be prompted to authorize the script.

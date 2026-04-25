@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Auto-Send — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d0d0d;
+      --surface: #161616;
+      --surface-2: #1e1e1e;
+      --ink: #f0ede5;
+      --muted: #7a7770;
+      --line: #2a2a2a;
+      --accent: #b8ff47;
+      --success: #4ade80;
+      --error: #ff5c5c;
+      --pending: #fbbf24;
+      --info: #60a5fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--ink);
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+    .hero {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      font-family: 'Instrument Serif', serif;
+      font-size: 48px;
+      font-weight: 400;
+      line-height: 1;
+      margin: 0 0 8px;
+      letter-spacing: -0.01em;
+    }
+    h1 em { color: var(--accent); font-style: italic; }
+    .hero p {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+    }
+    h2 {
+      font-family: 'Instrument Serif', serif;
+      font-size: 22px;
+      font-weight: 400;
+      font-style: italic;
+      margin: 0 0 16px;
+    }
+    .meta {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .meta .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .meta .dot.live { background: var(--success); animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .section {
+      margin-bottom: 32px;
+      padding: 24px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+    }
+    .config-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+    label {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input[type="text"], input[type="password"], input[type="search"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--ink);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      border-radius: 2px;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+    button {
+      background: var(--accent);
+      color: #000;
+      border: 0;
+      padding: 11px 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      border-radius: 2px;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: #c9ff6b; }
+    button.secondary {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    button.secondary:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    button.secondary.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: #1a2010;
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+    }
+    .stat-card {
+      padding: 18px 20px;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+    }
+    .stat-card .label {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .stat-card .value {
+      font-family: 'Instrument Serif', serif;
+      font-size: 44px;
+      line-height: 1;
+      margin-top: 6px;
+    }
+    .stat-card.sent .value    { color: var(--success); }
+    .stat-card.failed .value  { color: var(--error); }
+    .stat-card.skipped .value { color: var(--info); }
+    .stat-card.pending .value { color: var(--pending); }
+    .stat-card .sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    .chart {
+      display: grid;
+      grid-template-columns: repeat(14, 1fr);
+      gap: 6px;
+      align-items: end;
+      height: 140px;
+      padding: 12px 0 4px;
+    }
+    .chart .col {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: end;
+      height: 100%;
+      gap: 2px;
+    }
+    .chart .bar {
+      width: 100%;
+      border-radius: 1px;
+      transition: opacity 0.15s;
+    }
+    .chart .bar.sent   { background: var(--success); }
+    .chart .bar.failed { background: var(--error); }
+    .chart .col:hover .bar { opacity: 0.7; }
+    .chart .col .tick {
+      font-size: 9px;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 6px;
+      letter-spacing: 0.04em;
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: repeat(14, 1fr);
+      gap: 6px;
+    }
+    .chart-row .tick {
+      font-size: 9px;
+      color: var(--muted);
+      text-align: center;
+      letter-spacing: 0.04em;
+    }
+    .legend {
+      display: flex;
+      gap: 16px;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 12px;
+    }
+    .legend .swatch {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 1px;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .legend .swatch.sent   { background: var(--success); }
+    .legend .swatch.failed { background: var(--error); }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .toolbar .filters { display: flex; gap: 6px; }
+    .toolbar input[type="search"] {
+      max-width: 280px;
+      margin-left: auto;
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+    .toolbar .count {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .log-table th, .log-table td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    .log-table th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+    }
+    .log-table tbody tr:hover { background: var(--surface-2); }
+    .status-pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 2px;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .status-pill.sent    { background: #0a2a14; color: var(--success); }
+    .status-pill.failed  { background: #2a0a0a; color: var(--error); }
+    .status-pill.skipped { background: #0a1a2a; color: var(--info); }
+    .status-pill.pending { background: #2a2000; color: var(--pending); }
+    .detail-cell {
+      color: var(--muted);
+      font-size: 11px;
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .time-cell { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+      font-size: 13px;
+      font-style: italic;
+    }
+    .error-box {
+      padding: 12px 16px;
+      background: #2a0f0f;
+      border-left: 2px solid var(--error);
+      font-size: 12px;
+      color: #ff8a8a;
+      border-radius: 2px;
+      margin-bottom: 16px;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+      font-style: italic;
+    }
+    @media (max-width: 720px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .config-row { grid-template-columns: 1fr; }
+      .chart, .chart-row { grid-template-columns: repeat(7, 1fr); }
+      .chart .col:nth-child(2n) { display: none; }
+      .chart-row .tick:nth-child(2n) { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <div>
+      <h1>Auto-Send <em>Dashboard</em></h1>
+      <p>Live view of WhatsApp template sends triggered by new leads.</p>
+    </div>
+    <div class="meta" id="meta">
+      <span class="dot" id="liveDot"></span>
+      <span id="metaText">Not connected</span>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="section" id="configSection">
+    <h2>Connect to your sheet.</h2>
+    <div class="config-row">
+      <div>
+        <label>Apps Script Web App URL</label>
+        <input type="text" id="cfgUrl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+      </div>
+      <div>
+        <label>Webhook Secret (token)</label>
+        <input type="password" id="cfgToken" placeholder="Same secret you set in Script Properties" autocomplete="off">
+      </div>
+      <button onclick="saveConfig()">Connect</button>
+    </div>
+    <p class="hint">Stored in this browser only (localStorage). Deploy <code>doGet</code> from <code>Code.gs</code> as a Web App, set <code>WEBHOOK_SECRET</code> in Script Properties, paste the URL + secret here.</p>
+  </div>
+
+  <div id="errorBox"></div>
+
+  <!-- Stats -->
+  <div class="section" id="statsSection" style="display:none">
+    <h2>Numbers.</h2>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="label">Total Leads</div>
+        <div class="value" id="sTotal">—</div>
+      </div>
+      <div class="stat-card sent">
+        <div class="label">Sent</div>
+        <div class="value" id="sSent">—</div>
+        <div class="sub" id="sRate">—</div>
+      </div>
+      <div class="stat-card failed">
+        <div class="label">Failed</div>
+        <div class="value" id="sFailed">—</div>
+      </div>
+      <div class="stat-card skipped">
+        <div class="label">Skipped</div>
+        <div class="value" id="sSkipped">—</div>
+      </div>
+      <div class="stat-card pending">
+        <div class="label">Pending</div>
+        <div class="value" id="sPending">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Daily chart -->
+  <div class="section" id="chartSection" style="display:none">
+    <h2>Last 14 days.</h2>
+    <div class="chart" id="chart"></div>
+    <div class="chart-row" id="chartLabels"></div>
+    <div class="legend">
+      <span><span class="swatch sent"></span>Sent</span>
+      <span><span class="swatch failed"></span>Failed</span>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="section" id="logSection" style="display:none">
+    <h2>Recent activity.</h2>
+    <div class="toolbar">
+      <div class="filters" id="filters">
+        <button class="secondary active" data-filter="all">All</button>
+        <button class="secondary" data-filter="sent">Sent</button>
+        <button class="secondary" data-filter="failed">Failed</button>
+        <button class="secondary" data-filter="skipped">Skipped</button>
+        <button class="secondary" data-filter="pending">Pending</button>
+      </div>
+      <input type="search" id="searchBox" placeholder="Search name or phone…">
+      <span class="count" id="resultCount"></span>
+    </div>
+    <div style="max-height: 520px; overflow-y: auto;">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th style="width: 50px;">Row</th>
+            <th>Name</th>
+            <th>Phone</th>
+            <th>Status</th>
+            <th>Detail</th>
+            <th style="width: 180px;">Time (UTC)</th>
+          </tr>
+        </thead>
+        <tbody id="logBody"></tbody>
+      </table>
+      <div class="empty" id="logEmpty" style="display:none">No entries match.</div>
+    </div>
+  </div>
+
+  <script>
+    const REFRESH_MS = 15000;
+    const STORAGE_KEY = 'wa_dashboard_cfg';
+
+    let allEntries = [];
+    let filterStatus = 'all';
+    let searchTerm = '';
+    let refreshTimer = null;
+    let lastFetchOk = false;
+
+    // ─── Config ──────────────────────────────────────────────
+    function loadConfig() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch { return null; }
+    }
+
+    function saveConfig() {
+      const url   = document.getElementById('cfgUrl').value.trim();
+      const token = document.getElementById('cfgToken').value.trim();
+      if (!url || !token) {
+        showError('Both URL and token are required.');
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ url, token }));
+      clearError();
+      startRefresh();
+    }
+
+    function buildEndpoint(cfg) {
+      const sep = cfg.url.includes('?') ? '&' : '?';
+      return cfg.url + sep + 'token=' + encodeURIComponent(cfg.token);
+    }
+
+    // ─── Fetch + render loop ─────────────────────────────────
+    async function fetchData() {
+      const cfg = loadConfig();
+      if (!cfg) return;
+
+      try {
+        const resp = await fetch(buildEndpoint(cfg), { method: 'GET' });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+
+        clearError();
+        lastFetchOk = true;
+        renderAll(data);
+        updateMeta(true, data.generatedAt);
+      } catch (err) {
+        lastFetchOk = false;
+        showError('Fetch failed: ' + err.message);
+        updateMeta(false);
+      }
+    }
+
+    function startRefresh() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      fetchData();
+      refreshTimer = setInterval(fetchData, REFRESH_MS);
+    }
+
+    // ─── Render ──────────────────────────────────────────────
+    function renderAll(data) {
+      document.getElementById('statsSection').style.display = 'block';
+      document.getElementById('chartSection').style.display = 'block';
+      document.getElementById('logSection').style.display   = 'block';
+
+      renderStats(data.stats);
+      renderChart(data.daily);
+      allEntries = data.entries || [];
+      renderLog();
+    }
+
+    function renderStats(s) {
+      document.getElementById('sTotal').textContent   = s.total;
+      document.getElementById('sSent').textContent    = s.sent;
+      document.getElementById('sFailed').textContent  = s.failed;
+      document.getElementById('sSkipped').textContent = s.skipped;
+      document.getElementById('sPending').textContent = s.pending;
+
+      const attempted = s.sent + s.failed;
+      const rate = attempted > 0 ? Math.round((s.sent / attempted) * 100) : 0;
+      document.getElementById('sRate').textContent =
+        attempted > 0 ? `${rate}% success of ${attempted} attempts` : 'No attempts yet';
+    }
+
+    function renderChart(daily) {
+      const chart  = document.getElementById('chart');
+      const labels = document.getElementById('chartLabels');
+      chart.innerHTML  = '';
+      labels.innerHTML = '';
+
+      const maxVal = Math.max(1, ...daily.map(d => d.sent + d.failed));
+
+      daily.forEach(d => {
+        const col = document.createElement('div');
+        col.className = 'col';
+        const total = d.sent + d.failed;
+        const sentH   = (d.sent   / maxVal) * 100;
+        const failedH = (d.failed / maxVal) * 100;
+        col.title = `${d.day}\nSent: ${d.sent}\nFailed: ${d.failed}`;
+
+        if (d.failed > 0) {
+          const fb = document.createElement('div');
+          fb.className = 'bar failed';
+          fb.style.height = failedH + '%';
+          col.appendChild(fb);
+        }
+        if (d.sent > 0) {
+          const sb = document.createElement('div');
+          sb.className = 'bar sent';
+          sb.style.height = sentH + '%';
+          col.appendChild(sb);
+        }
+        if (total === 0) {
+          const empty = document.createElement('div');
+          empty.style.height = '2px';
+          empty.style.background = 'var(--line)';
+          col.appendChild(empty);
+        }
+        chart.appendChild(col);
+
+        const tick = document.createElement('div');
+        tick.className = 'tick';
+        tick.textContent = d.day.slice(5); // MM-DD
+        labels.appendChild(tick);
+      });
+    }
+
+    function renderLog() {
+      const body  = document.getElementById('logBody');
+      const empty = document.getElementById('logEmpty');
+      const term  = searchTerm.toLowerCase();
+
+      const filtered = allEntries.filter(e => {
+        if (filterStatus !== 'all' && e.status !== filterStatus) return false;
+        if (term) {
+          const hay = (e.name + ' ' + e.phone).toLowerCase();
+          if (!hay.includes(term)) return false;
+        }
+        return true;
+      });
+
+      document.getElementById('resultCount').textContent =
+        `${filtered.length} of ${allEntries.length}`;
+
+      if (filtered.length === 0) {
+        body.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none';
+
+      body.innerHTML = filtered.map(e => `
+        <tr>
+          <td style="color: var(--muted);">${e.row}</td>
+          <td>${escapeHtml(e.name) || '<span style="color:var(--muted)">—</span>'}</td>
+          <td style="font-variant-numeric: tabular-nums;">${escapeHtml(e.phone) || '<span style="color:var(--muted)">—</span>'}</td>
+          <td><span class="status-pill ${e.status}">${e.status}</span></td>
+          <td class="detail-cell" title="${escapeHtml(e.detail)}">${escapeHtml(e.detail) || '—'}</td>
+          <td class="time-cell">${formatTime(e.time)}</td>
+        </tr>
+      `).join('');
+    }
+
+    // ─── UI helpers ──────────────────────────────────────────
+    function updateMeta(ok, generatedAt) {
+      const dot  = document.getElementById('liveDot');
+      const text = document.getElementById('metaText');
+      dot.classList.toggle('live', ok);
+      if (ok) {
+        const t = generatedAt ? new Date(generatedAt) : new Date();
+        text.textContent = 'Live · last update ' + t.toLocaleTimeString();
+      } else {
+        text.textContent = 'Disconnected';
+      }
+    }
+
+    function showError(msg) {
+      document.getElementById('errorBox').innerHTML =
+        `<div class="error-box">${escapeHtml(msg)}</div>`;
+    }
+
+    function clearError() {
+      document.getElementById('errorBox').innerHTML = '';
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function formatTime(t) {
+      if (!t) return '—';
+      const d = new Date(t);
+      if (isNaN(d.getTime())) return t;
+      return d.toISOString().replace('T', ' ').substring(0, 19);
+    }
+
+    // ─── Wire-up ─────────────────────────────────────────────
+    document.getElementById('filters').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-filter]');
+      if (!btn) return;
+      filterStatus = btn.dataset.filter;
+      [...document.querySelectorAll('#filters button')]
+        .forEach(b => b.classList.toggle('active', b === btn));
+      renderLog();
+    });
+
+    document.getElementById('searchBox').addEventListener('input', (e) => {
+      searchTerm = e.target.value;
+      renderLog();
+    });
+
+    // Boot
+    (function init() {
+      const cfg = loadConfig();
+      if (cfg) {
+        document.getElementById('cfgUrl').value   = cfg.url;
+        document.getElementById('cfgToken').value = cfg.token;
+        startRefresh();
+      }
+    })();
+  </script>
+</body>
+</html>
