@@ -18,6 +18,12 @@ var PHONE_COL      = 4;  // Column D
 var WA_STATUS_COL  = 36; // Column AJ – WhatsApp send status (after all existing data)
 var WA_TIME_COL    = 37; // Column AK – WhatsApp send timestamp
 
+// Autonomous send-loop config.
+// Time-trigger handler name + per-tick batch size. Allowed cadences in minutes:
+// 1, 5, 10, 15, 30, 60. Anything else is rejected by installAutoSendTrigger.
+var AUTO_TICK_FN = 'autoSendTick';
+var AUTO_BATCH   = 50;
+
 /**
  * Trigger handler – called automatically on each new Google Form submission.
  * Reads the submitted row and sends a WhatsApp message via the Vercel webhook.
@@ -207,7 +213,7 @@ function doGet(e) {
       } else if (status.indexOf('WA_FAILED') === 0) {
         category = 'failed';
         stats.failed++;
-        detail = status.replace(/^WA_FAILED:\s*/, '');
+        detail = status.replace(/^WA_FAILED2?:\s*/, '');
       } else if (status.indexOf('WA_SKIPPED') === 0) {
         category = 'skipped';
         stats.skipped++;
@@ -258,8 +264,19 @@ function doGet(e) {
     stats: stats,
     daily: daily,
     entries: entries,
+    autoSend: _autoSendStatus(props),
     generatedAt: new Date().toISOString()
   });
+}
+
+// Read-only snapshot of the auto-send config from Script Properties.
+function _autoSendStatus(props) {
+  return {
+    enabled:     props.getProperty('AUTO_SEND_ENABLED') === '1',
+    intervalMin: parseInt(props.getProperty('AUTO_SEND_INTERVAL_MIN') || '0', 10) || 0,
+    retryOnce:   props.getProperty('AUTO_SEND_RETRY') === '1',
+    lastTick:    props.getProperty('AUTO_SEND_LAST_TICK') || ''
+  };
 }
 
 /**
@@ -285,8 +302,12 @@ function doPost(e) {
     return _json({ error: 'Invalid JSON body' });
   }
 
+  if (body.action === 'configureAuto') {
+    return _handleConfigureAuto(body, props);
+  }
+
   if (body.action !== 'send' || !Array.isArray(body.rows) || body.rows.length === 0) {
-    return _json({ error: 'Expected { action: "send", rows: [number, ...] }' });
+    return _json({ error: 'Expected { action: "send", rows: [number, ...] } or { action: "configureAuto", ... }' });
   }
 
   var rows = body.rows.slice(0, SEND_BATCH_CAP).map(function(r) { return parseInt(r, 10); })
@@ -363,6 +384,123 @@ function _json(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Autonomous send loop
+// ─────────────────────────────────────────────────────────────────
+
+var ALLOWED_INTERVALS = [1, 5, 10, 15, 30, 60];
+
+// doPost handler for { action: "configureAuto", enabled, intervalMin, retryOnce }.
+// Persists the config and (re)installs / removes the time trigger.
+function _handleConfigureAuto(body, props) {
+  var enabled    = body.enabled === true || body.enabled === '1' || body.enabled === 1;
+  var intervalMin = parseInt(body.intervalMin, 10) || 0;
+  var retryOnce  = body.retryOnce === true || body.retryOnce === '1' || body.retryOnce === 1;
+
+  if (enabled && ALLOWED_INTERVALS.indexOf(intervalMin) === -1) {
+    return _json({ error: 'intervalMin must be one of ' + ALLOWED_INTERVALS.join(', ') });
+  }
+
+  props.setProperty('AUTO_SEND_ENABLED',      enabled ? '1' : '0');
+  props.setProperty('AUTO_SEND_INTERVAL_MIN', enabled ? String(intervalMin) : '0');
+  props.setProperty('AUTO_SEND_RETRY',        retryOnce ? '1' : '0');
+
+  installAutoSendTrigger(enabled ? intervalMin : 0);
+
+  return _json({ ok: true, autoSend: _autoSendStatus(props) });
+}
+
+// Removes any existing autoSendTick triggers; if intervalMin > 0, installs a new one.
+function installAutoSendTrigger(intervalMin) {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === AUTO_TICK_FN) {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  if (!intervalMin) return;
+  if (ALLOWED_INTERVALS.indexOf(intervalMin) === -1) {
+    throw new Error('Unsupported intervalMin: ' + intervalMin);
+  }
+  var b = ScriptApp.newTrigger(AUTO_TICK_FN).timeBased();
+  if (intervalMin === 60) b.everyHours(1).create();
+  else                    b.everyMinutes(intervalMin).create();
+}
+
+// Time-trigger handler. Drains up to AUTO_BATCH eligible rows per call.
+// Eligibility: phone present AND (status empty OR (retryOnce && status starts with
+// 'WA_FAILED:' but NOT 'WA_FAILED2:')). Failed retries become WA_FAILED2.
+function autoSendTick() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('AUTO_SEND_ENABLED') !== '1') return;
+
+  var url    = props.getProperty('WEBHOOK_URL');
+  var secret = props.getProperty('WEBHOOK_SECRET');
+  if (!url || !secret) {
+    Logger.log('autoSendTick: missing WEBHOOK_URL or WEBHOOK_SECRET');
+    return;
+  }
+  var retryOnce = props.getProperty('AUTO_SEND_RETRY') === '1';
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('new LEADS');
+  if (!sheet) { Logger.log('autoSendTick: sheet not found'); return; }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) { Logger.log('autoSendTick: lock busy'); return; }
+
+  try {
+    // Pull phone (D) and status (AJ) for the whole sheet in two batched reads.
+    var n        = lastRow - 1;
+    var phones   = sheet.getRange(2, PHONE_COL,     n, 1).getValues();
+    var statuses = sheet.getRange(2, WA_STATUS_COL, n, 1).getValues();
+
+    var picks = [];   // { row, isRetry }
+    for (var i = 0; i < n && picks.length < AUTO_BATCH; i++) {
+      var phone  = String(phones[i][0]   || '').trim();
+      var status = String(statuses[i][0] || '').trim();
+      if (!phone) continue;
+
+      if (status === '') {
+        picks.push({ row: i + 2, isRetry: false });
+      } else if (retryOnce && status.indexOf('WA_FAILED:') === 0 && status.indexOf('WA_FAILED2:') !== 0) {
+        picks.push({ row: i + 2, isRetry: true });
+      }
+    }
+
+    var sent = 0, failed = 0, skipped = 0;
+    for (var p = 0; p < picks.length; p++) {
+      var r = _sendRowAuto(sheet, picks[p].row, url, secret, picks[p].isRetry);
+      if      (r.status === 'sent')    sent++;
+      else if (r.status === 'failed')  failed++;
+      else if (r.status === 'skipped') skipped++;
+      if (p < picks.length - 1) Utilities.sleep(300);
+    }
+
+    props.setProperty('AUTO_SEND_LAST_TICK', new Date().toISOString());
+    Logger.log('autoSendTick: ' + picks.length + ' picked · ' +
+               sent + ' sent · ' + failed + ' failed · ' + skipped + ' skipped');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Wraps _sendRow. If this attempt is itself a retry (the row was already
+// WA_FAILED) and it fails again, swap WA_FAILED: -> WA_FAILED2: in the sheet
+// so the auto loop won't pick it up next tick.
+function _sendRowAuto(sheet, row, url, secret, isRetry) {
+  var r = _sendRow(sheet, row, url, secret);
+  if (isRetry && r.status === 'failed') {
+    var current = String(sheet.getRange(row, WA_STATUS_COL).getValue());
+    if (current.indexOf('WA_FAILED:') === 0) {
+      sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED2:' + current.substring('WA_FAILED:'.length));
+    }
+  }
+  return r;
 }
 
 /**

@@ -777,6 +777,39 @@
 
     <div id="dashErrorBox"></div>
 
+    <!-- Auto-send -->
+    <div class="section" id="dashAutoSection" style="display:none">
+      <span class="step-num">Autonomous</span>
+      <h2>Auto-send.</h2>
+      <div class="config-row" style="grid-template-columns: 1.4fr 1fr 1fr auto;">
+        <div>
+          <label>Status</label>
+          <div id="dashAutoState" style="padding:10px 0; font-size:12px; color:var(--muted);">—</div>
+        </div>
+        <div>
+          <label>Cadence</label>
+          <select id="dashAutoInterval">
+            <option value="0">Off</option>
+            <option value="1">Every 1 min</option>
+            <option value="5">Every 5 min</option>
+            <option value="10">Every 10 min</option>
+            <option value="15">Every 15 min</option>
+            <option value="30">Every 30 min</option>
+            <option value="60">Every 1 hour</option>
+          </select>
+        </div>
+        <div>
+          <label>Retry</label>
+          <div class="toggle-row" style="margin-top:10px;">
+            <input type="checkbox" id="dashAutoRetry">
+            <label for="dashAutoRetry" style="cursor:pointer;">Retry failed rows once</label>
+          </div>
+        </div>
+        <button id="dashAutoApplyBtn" onclick="dashSaveAuto()">Apply</button>
+      </div>
+      <p class="hint">Runs in Google's infrastructure — no tab needed once enabled. Drains up to 50 rows per tick.</p>
+    </div>
+
     <!-- Stats -->
     <div class="section" id="dashStatsSection" style="display:none">
       <h2>Numbers.</h2>
@@ -1310,14 +1343,68 @@
     }
 
     function dashRender(data) {
+      document.getElementById('dashAutoSection').style.display  = 'block';
       document.getElementById('dashStatsSection').style.display = 'block';
       document.getElementById('dashChartSection').style.display = 'block';
       document.getElementById('dashLogSection').style.display   = 'block';
 
+      dashRenderAuto(data.autoSend);
       dashRenderStats(data.stats);
       dashRenderChart(data.daily);
       dashEntries = data.entries || [];
       dashRenderLog();
+    }
+
+    function dashRenderAuto(auto) {
+      auto = auto || { enabled: false, intervalMin: 0, retryOnce: false, lastTick: '' };
+      // Don't clobber controls while the user is mid-edit (Apply not yet clicked).
+      if (!dashAutoDirty) {
+        document.getElementById('dashAutoInterval').value =
+          auto.enabled ? String(auto.intervalMin) : '0';
+        document.getElementById('dashAutoRetry').checked = !!auto.retryOnce;
+      }
+      var stateEl = document.getElementById('dashAutoState');
+      if (!auto.enabled) {
+        stateEl.textContent = 'Off';
+        stateEl.style.color = 'var(--muted)';
+      } else {
+        var when = auto.lastTick ? new Date(auto.lastTick).toLocaleTimeString() : 'no tick yet';
+        stateEl.textContent = 'Running every ' + auto.intervalMin + 'm · last tick ' + when;
+        stateEl.style.color = 'var(--success)';
+      }
+    }
+
+    var dashAutoDirty = false;
+    document.getElementById('dashAutoInterval').addEventListener('change', () => { dashAutoDirty = true; });
+    document.getElementById('dashAutoRetry').addEventListener('change',    () => { dashAutoDirty = true; });
+
+    async function dashSaveAuto() {
+      const cfg = dashLoadConfig();
+      if (!cfg) { dashShowError('Connect first.'); return; }
+      const intervalMin = parseInt(document.getElementById('dashAutoInterval').value, 10) || 0;
+      const retryOnce   = document.getElementById('dashAutoRetry').checked;
+      const enabled     = intervalMin > 0;
+
+      const btn = document.getElementById('dashAutoApplyBtn');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const resp = await fetch(dashProxyBase(cfg), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'configureAuto', enabled, intervalMin, retryOnce })
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        dashAutoDirty = false;
+        dashShowInfo(enabled
+          ? `Auto-send on — every ${intervalMin} min${retryOnce ? ', retrying failures once' : ''}`
+          : 'Auto-send off');
+        await dashFetch();
+      } catch (err) {
+        dashShowError('Save failed: ' + err.message);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Apply';
+      }
     }
 
     function dashRenderStats(s) {
