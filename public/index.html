@@ -1163,6 +1163,24 @@
     const DASH_STORAGE_KEY = 'wa_dashboard_cfg';
     const DASH_SEND_CAP = 50;
 
+    // Canonical filter options observed in the "new LEADS" sheet.
+    // Any values that appear in the data but aren't in these lists are
+    // appended automatically by _populateColFilter.
+    const COL_E_OPTIONS = [
+      'طالب',
+      'موظف',
+      'عمل الخاص',
+      'رجل أعمال',
+      'Selbstständig'
+    ];
+    const COL_G_OPTIONS = [
+      'أقل من 5000 يورو.',
+      'من 5000 يورو إلى 12000 يورو.',
+      '50.000€+',
+      'أكثر من 20000 يورو.',
+      'Unter 5.000'
+    ];
+
     let dashEntries  = [];
     let dashFilter   = 'all';
     let dashColE     = '';
@@ -1368,13 +1386,15 @@
     }
 
     function dashRebuildGroupFilter() {
-      _populateColFilter('dashColEFilter', 'colE', 'All (col E)', () => dashColE, v => dashColE = v);
-      _populateColFilter('dashColGFilter', 'colG', 'All (col G)', () => dashColG, v => dashColG = v);
+      _populateColFilter('dashColEFilter', 'colE', 'All (col E)', COL_E_OPTIONS, () => dashColE, v => dashColE = v);
+      _populateColFilter('dashColGFilter', 'colG', 'All (col G)', COL_G_OPTIONS, () => dashColG, v => dashColG = v);
     }
 
-    function _populateColFilter(selId, field, allLabel, getCurrent, setCurrent) {
-      const sel = document.getElementById(selId);
-      const values = [...new Set(dashEntries.map(e => (e[field] || '').trim()).filter(Boolean))].sort();
+    // Builds the dropdown from canonical options + any extras seen in current data.
+    function _populateColFilter(selId, field, allLabel, canonical, getCurrent, setCurrent) {
+      const sel  = document.getElementById(selId);
+      const seen = dashEntries.map(e => (e[field] || '').trim()).filter(Boolean);
+      const values = [...new Set([...canonical, ...seen])];
       const current = getCurrent();
       sel.innerHTML = `<option value="">${allLabel}</option>` +
         values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
@@ -1553,6 +1573,10 @@
           document.getElementById('cfgFromRow').value = cfg.fromRow == null ? '' : cfg.fromRow;
         }
       }
+
+      // Populate filter dropdowns with canonical values up-front so they show
+      // even before the first fetch completes.
+      dashRebuildGroupFilter();
 
       const initial = (window.location.hash || '').replace('#', '');
       showTab(initial === 'dashboard' ? 'dashboard' : 'blaster');

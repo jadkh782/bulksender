@@ -257,7 +257,7 @@ function doGet(e) {
   return _json({
     stats: stats,
     daily: daily,
-    entries: entries.slice(0, 200),
+    entries: entries,
     generatedAt: new Date().toISOString()
   });
 }
