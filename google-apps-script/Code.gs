@@ -4,19 +4,37 @@
  * Install this in your Google Sheet via Extensions > Apps Script.
  *
  * Required Script Properties (Project Settings > Script Properties):
- *   WEBHOOK_URL    – e.g. https://your-app.vercel.app/api/auto-send
- *   WEBHOOK_SECRET – same secret stored in Vercel env vars
+ *   WEBHOOK_URL    – e.g. https://bulksender.<subdomain>.workers.dev/api/auto-send
+ *   WEBHOOK_SECRET – same value set with `wrangler secret put WEBHOOK_SECRET`
  *
- * Sheet column mapping (0-indexed for e.values):
- *   Index 0 (Col A): First name
- *   Index 3 (Col D): Phone number
+ * Sheet: "Mentoring-arabic"  (layout as of Sept 2026)
+ *   Col A: First name
+ *   Col B: Last name
+ *   Col C: Email
+ *   Col D: Phone number (WhatsApp)
+ *   Col E: Professional situation
+ *   Col F: Business status
+ *   Col G: Available capital
+ *   Col H: Reason for contact
+ *   Col I: Best time to call
+ *   Col J-N: utm_medium, utm_source, utm_campaign, utm_content, utm_term
+ *   Col O: Submitted At        (was J before the utm_* columns were inserted)
+ *   Col P: Token               (was K)
+ *   Col R: Manual status ("statuis")   (was M)
+ *   WhatsApp send status + timestamp: written by this script, located at
+ *   runtime by their row-1 header labels rather than by a fixed position.
+ *   See _waCols() for why.
  */
 
-// Column indices in the "new LEADS" sheet (1-based, for Range operations)
+// Column indices in the "Mentoring-arabic" sheet (1-based, for Range operations).
+// A and D sit left of every insert made so far, so they stay fixed.
 var FIRST_NAME_COL = 1;  // Column A
 var PHONE_COL      = 4;  // Column D
-var WA_STATUS_COL  = 36; // Column AJ – WhatsApp send status (after all existing data)
-var WA_TIME_COL    = 37; // Column AK – WhatsApp send timestamp
+
+// Fallback positions for the two status columns, used only to place the header
+// labels the first time. Everything else goes through _waStatusCol/_waTimeCol.
+var WA_STATUS_COL  = 36; // Column AJ
+var WA_TIME_COL    = 37; // Column AK
 
 // Autonomous send-loop config.
 // Time-trigger handler name + per-tick batch size. Allowed cadences in minutes:
@@ -24,57 +42,135 @@ var WA_TIME_COL    = 37; // Column AK – WhatsApp send timestamp
 var AUTO_TICK_FN = 'autoSendTick';
 var AUTO_BATCH   = 50;
 
+// HARD SAFETY FLOOR — rows BELOW this number are NEVER contacted by any
+// send path (auto loop, dashboard manual send, form-submit trigger).
+// This is enforced inside _sendRow itself, so even a buggy caller can't
+// bypass it. Raising this requires editing Code.gs and redeploying —
+// intentional, so no UI input or stale config can lower it.
+var MIN_ROW_TO_SEND = 2;
+
+// -----------------------------------------------------------------
+// Locating the two status columns
+// -----------------------------------------------------------------
+//
+// Sept 2026: five utm_* columns were inserted at J. Everything to their right
+// shifted five places, so the status pair moved from AJ/AK to AO/AP. This
+// script kept reading the old fixed positions, went blind to ~3,000 completed
+// sends, and would have re-messaged every one of them on the next auto tick.
+//
+// The columns now carry a header label in row 1 and are found by that label at
+// run time. Inserting a column moves the header along with its data, so the
+// lookup follows it and the same break cannot happen again. WA_STATUS_COL and
+// WA_TIME_COL survive only as the position where the labels get stamped the
+// very first time.
+
+var WA_STATUS_HEADER = 'WA Status';
+var WA_TIME_HEADER   = 'WA Sent At';
+
+var _waColsCache = null;
+
+// { status: <1-based col>, time: <1-based col> }. Memoized: one read per run.
+function _waCols(sheet) {
+  if (_waColsCache) return _waColsCache;
+
+  var maxCol  = sheet.getMaxColumns();
+  var headers = sheet.getRange(1, 1, 1, maxCol).getValues()[0];
+  var status  = 0;
+  var time    = 0;
+
+  for (var i = 0; i < headers.length; i++) {
+    var h = String(headers[i] || '').trim();
+    if      (h === WA_STATUS_HEADER && !status) status = i + 1;
+    else if (h === WA_TIME_HEADER   && !time)   time   = i + 1;
+  }
+
+  if (!status || !time) {
+    // Labels absent: first run since this change. Fall back to the historical
+    // fixed positions and stamp the labels so every later run self-locates.
+    status = status || WA_STATUS_COL;
+    time   = time   || WA_TIME_COL;
+
+    var need = Math.max(status, time);
+    if (maxCol < need) sheet.insertColumnsAfter(maxCol, need - maxCol);
+
+    sheet.getRange(1, status).setValue(WA_STATUS_HEADER);
+    sheet.getRange(1, time).setValue(WA_TIME_HEADER);
+    Logger.log('_waCols: labels were missing, stamped them at columns ' +
+               status + ' and ' + time);
+  }
+
+  _waColsCache = { status: status, time: time };
+  return _waColsCache;
+}
+
+function _waStatusCol(sheet) { return _waCols(sheet).status; }
+function _waTimeCol(sheet)   { return _waCols(sheet).time; }
+
+
+// -----------------------------------------------------------------
+// Not messaging the same person twice
+// -----------------------------------------------------------------
+//
+// 473 phone numbers in this sheet appear on more than one row, because people
+// fill the form more than once. A per-row status therefore is not enough on its
+// own: 143 rows in the pending queue belong to somebody who has already had the
+// message. Every send path checks the number, not just the row.
+
+// Same normalisation the Worker applies before dialling.
+function _normPhone(p) {
+  return String(p || '').replace(/[^0-9]/g, '');
+}
+
+var _sentPhonesCache = null;
+
+// { <normalised phone>: <first row that got WA_SENT> }, memoized per run.
+function _sentPhones(sheet) {
+  if (_sentPhonesCache) return _sentPhonesCache;
+
+  var map     = {};
+  var lastRow = sheet.getLastRow();
+
+  if (lastRow >= 2) {
+    var n        = lastRow - 1;
+    var phones   = sheet.getRange(2, PHONE_COL,          n, 1).getValues();
+    var statuses = sheet.getRange(2, _waStatusCol(sheet), n, 1).getValues();
+
+    for (var i = 0; i < n; i++) {
+      if (String(statuses[i][0] || '').indexOf('WA_SENT') !== 0) continue;
+      var phone = _normPhone(phones[i][0]);
+      if (phone && !map[phone]) map[phone] = i + 2;
+    }
+  }
+
+  _sentPhonesCache = map;
+  return _sentPhonesCache;
+}
+
 /**
  * Trigger handler – called automatically on each new Google Form submission.
- * Reads the submitted row and sends a WhatsApp message via the Vercel webhook.
+ * Reads the submitted row and sends a WhatsApp message via the Worker webhook.
  */
 function onFormSubmit(e) {
   if (!e || !e.range) return;
 
   var sheet = e.range.getSheet();
-  var row = e.range.getRow();
+  var row   = e.range.getRow();
 
-  var firstName = String(sheet.getRange(row, FIRST_NAME_COL).getValue()).trim();
-  var phone     = String(sheet.getRange(row, PHONE_COL).getValue()).trim();
+  // Hard floor - refuse to contact anything below the send floor, even if
+  // a form submission somehow lands there.
+  if (row < MIN_ROW_TO_SEND) return;
 
-  if (!phone) {
-    sheet.getRange(row, WA_STATUS_COL).setValue('WA_SKIPPED: no phone');
-    sheet.getRange(row, WA_TIME_COL).setValue(new Date().toISOString());
-    return;
-  }
-
-  var props   = PropertiesService.getScriptProperties();
-  var url     = props.getProperty('WEBHOOK_URL');
-  var secret  = props.getProperty('WEBHOOK_SECRET');
+  var props  = PropertiesService.getScriptProperties();
+  var url    = props.getProperty('WEBHOOK_URL');
+  var secret = props.getProperty('WEBHOOK_SECRET');
 
   if (!url || !secret) {
-    sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: missing script properties');
-    sheet.getRange(row, WA_TIME_COL).setValue(new Date().toISOString());
+    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_FAILED: missing script properties');
+    sheet.getRange(row, _waTimeCol(sheet)).setValue(new Date().toISOString());
     return;
   }
 
-  try {
-    var response = UrlFetchApp.fetch(url, {
-      method: 'post',
-      contentType: 'application/json',
-      headers: { 'Authorization': 'Bearer ' + secret },
-      payload: JSON.stringify({ phone: phone, name: firstName }),
-      muteHttpExceptions: true
-    });
-
-    var httpCode = response.getResponseCode();
-    var result   = JSON.parse(response.getContentText());
-
-    if (httpCode === 200 && result.success) {
-      sheet.getRange(row, WA_STATUS_COL).setValue('WA_SENT: ' + (result.messageId || 'ok'));
-    } else {
-      sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + (result.error || 'HTTP ' + httpCode));
-    }
-  } catch (err) {
-    sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err.message);
-  }
-
-  sheet.getRange(row, WA_TIME_COL).setValue(new Date().toISOString());
+  _sendRow(sheet, row, url, secret);
 }
 
 /**
@@ -83,7 +179,9 @@ function onFormSubmit(e) {
  * Run from the Apps Script editor: select manualProcessPending > Run.
  */
 function manualProcessPending() {
-  var sheet   = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('new LEADS');
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
+  if (!sheet) { Logger.log('Sheet "Mentoring-arabic" not found'); return; }
+
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
 
@@ -102,41 +200,21 @@ function manualProcessPending() {
     return;
   }
 
-  var processed = 0;
+  var sent = 0, failed = 0, skipped = 0;
 
   try {
-    for (var row = 2; row <= lastRow; row++) {
-      var phone    = String(sheet.getRange(row, PHONE_COL).getValue()).trim();
-      var waStatus = String(sheet.getRange(row, WA_STATUS_COL).getValue()).trim();
+    var n        = lastRow - 1;
+    var phones   = sheet.getRange(2, PHONE_COL,           n, 1).getValues();
+    var statuses = sheet.getRange(2, _waStatusCol(sheet), n, 1).getValues();
 
-      // Skip if no phone or already processed
-      if (!phone || waStatus !== '') continue;
+    for (var i = 0; i < n; i++) {
+      if (!String(phones[i][0]   || '').trim()) continue;   // no number
+      if ( String(statuses[i][0] || '').trim()) continue;   // already processed
 
-      var firstName = String(sheet.getRange(row, FIRST_NAME_COL).getValue()).trim();
-
-      try {
-        var response = UrlFetchApp.fetch(url, {
-          method: 'post',
-          contentType: 'application/json',
-          headers: { 'Authorization': 'Bearer ' + secret },
-          payload: JSON.stringify({ phone: phone, name: firstName }),
-          muteHttpExceptions: true
-        });
-
-        var httpCode = response.getResponseCode();
-        var result   = JSON.parse(response.getContentText());
-
-        if (httpCode === 200 && result.success) {
-          sheet.getRange(row, WA_STATUS_COL).setValue('WA_SENT: ' + (result.messageId || 'ok'));
-        } else {
-          sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + (result.error || 'HTTP ' + httpCode));
-        }
-      } catch (err) {
-        sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err.message);
-      }
-
-      sheet.getRange(row, WA_TIME_COL).setValue(new Date().toISOString());
-      processed++;
+      var r = _sendRow(sheet, i + 2, url, secret);
+      if      (r.status === 'sent')    sent++;
+      else if (r.status === 'failed')  failed++;
+      else if (r.status === 'skipped') skipped++;
 
       Utilities.sleep(300); // rate limiting
     }
@@ -144,7 +222,8 @@ function manualProcessPending() {
     lock.releaseLock();
   }
 
-  Logger.log('Processed ' + processed + ' rows');
+  Logger.log('manualProcessPending: ' + sent + ' sent, ' + failed +
+             ' failed, ' + skipped + ' skipped');
 }
 
 // Extra columns surfaced in the dashboard for filtering.
@@ -172,8 +251,8 @@ function doGet(e) {
     return _json({ error: 'Unauthorized' });
   }
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('new LEADS');
-  if (!sheet) return _json({ error: 'Sheet "new LEADS" not found' });
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
+  if (!sheet) return _json({ error: 'Sheet "Mentoring-arabic" not found' });
 
   var fromRow = parseInt((e && e.parameter && e.parameter.fromRow) || '2', 10);
   if (isNaN(fromRow) || fromRow < 2) fromRow = 2;
@@ -189,8 +268,8 @@ function doGet(e) {
     var phones     = sheet.getRange(fromRow, PHONE_COL,      n, 1).getValues();
     var colsE      = sheet.getRange(fromRow, COL_E,          n, 1).getValues();
     var colsG      = sheet.getRange(fromRow, COL_G,          n, 1).getValues();
-    var statuses   = sheet.getRange(fromRow, WA_STATUS_COL,  n, 1).getValues();
-    var times      = sheet.getRange(fromRow, WA_TIME_COL,    n, 1).getValues();
+    var statuses   = sheet.getRange(fromRow, _waStatusCol(sheet),  n, 1).getValues();
+    var times      = sheet.getRange(fromRow, _waTimeCol(sheet),    n, 1).getValues();
 
     for (var i = 0; i < n; i++) {
       var phone  = String(phones[i][0]     || '').trim();
@@ -277,7 +356,8 @@ function _autoSendStatus(props) {
     retryOnce:   props.getProperty('AUTO_SEND_RETRY') === '1',
     lastTick:    props.getProperty('AUTO_SEND_LAST_TICK')   || '',
     haltReason:  props.getProperty('AUTO_SEND_HALT_REASON') || '',
-    haltAt:      props.getProperty('AUTO_SEND_HALT_AT')     || ''
+    haltAt:      props.getProperty('AUTO_SEND_HALT_AT')     || '',
+    minRow:      MIN_ROW_TO_SEND
   };
 }
 
@@ -313,11 +393,11 @@ function doPost(e) {
   }
 
   var rows = body.rows.slice(0, SEND_BATCH_CAP).map(function(r) { return parseInt(r, 10); })
-                      .filter(function(r) { return !isNaN(r) && r >= 2; });
-  if (rows.length === 0) return _json({ error: 'No valid rows' });
+                      .filter(function(r) { return !isNaN(r) && r >= MIN_ROW_TO_SEND; });
+  if (rows.length === 0) return _json({ error: 'No valid rows (all below send floor row ' + MIN_ROW_TO_SEND + ')' });
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('new LEADS');
-  if (!sheet) return _json({ error: 'Sheet "new LEADS" not found' });
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
+  if (!sheet) return _json({ error: 'Sheet "Mentoring-arabic" not found' });
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return _json({ error: 'Another send is already running' });
@@ -339,14 +419,34 @@ function doPost(e) {
 // Sends one row through WEBHOOK_URL and writes the outcome back to the sheet.
 // Returns { row, status: 'sent'|'failed'|'skipped', detail }.
 function _sendRow(sheet, row, url, secret) {
+  // Hard floor: never contact rows below MIN_ROW_TO_SEND, no matter who calls us.
+  if (row < MIN_ROW_TO_SEND) {
+    return { row: row, status: 'skipped', detail: 'below send floor (row ' + MIN_ROW_TO_SEND + ')', httpCode: 0 };
+  }
+
   var phone     = String(sheet.getRange(row, PHONE_COL).getValue()).trim();
   var firstName = String(sheet.getRange(row, FIRST_NAME_COL).getValue()).trim();
   var now       = new Date().toISOString();
 
-  if (!phone) {
-    sheet.getRange(row, WA_STATUS_COL).setValue('WA_SKIPPED: no phone');
-    sheet.getRange(row, WA_TIME_COL).setValue(now);
-    return { row: row, status: 'skipped', detail: 'no phone' };
+  // The Worker dials digits only and rejects anything under 8 of them, so catch
+  // that here instead of spending a request to be told. Some rows have a name
+  // typed into the phone column.
+  var clean = _normPhone(phone);
+  if (clean.length < 8) {
+    var why = phone ? 'not a usable phone number' : 'no phone';
+    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_SKIPPED: ' + why);
+    sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
+    return { row: row, status: 'skipped', detail: why };
+  }
+
+  // Same person, different row. To message them anyway, clear the status on the
+  // row named here first.
+  var seen = _sentPhones(sheet);
+  if (seen[clean] && seen[clean] !== row) {
+    var dupe = 'same number already messaged on row ' + seen[clean];
+    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_SKIPPED: ' + dupe);
+    sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
+    return { row: row, status: 'skipped', detail: dupe };
   }
 
   try {
@@ -365,19 +465,20 @@ function _sendRow(sheet, row, url, secret) {
 
     if (httpCode === 200 && result.success) {
       var id = result.messageId || 'ok';
-      sheet.getRange(row, WA_STATUS_COL).setValue('WA_SENT: ' + id);
-      sheet.getRange(row, WA_TIME_COL).setValue(now);
+      sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_SENT: ' + id);
+      sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
+      seen[clean] = row;   // later rows with this number now skip
       return { row: row, status: 'sent', detail: id, httpCode: httpCode };
     }
 
     var err = result.error
             || ('HTTP ' + httpCode + (raw ? ' — ' + raw.substring(0, 120) : ' — empty body'));
-    sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err);
-    sheet.getRange(row, WA_TIME_COL).setValue(now);
+    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_FAILED: ' + err);
+    sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
     return { row: row, status: 'failed', detail: err, httpCode: httpCode };
   } catch (err) {
-    sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED: ' + err.message);
-    sheet.getRange(row, WA_TIME_COL).setValue(now);
+    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_FAILED: ' + err.message);
+    sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
     return { row: row, status: 'failed', detail: err.message, httpCode: 0 };
   }
 }
@@ -476,7 +577,7 @@ function autoSendTick() {
   }
   var retryOnce = props.getProperty('AUTO_SEND_RETRY') === '1';
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('new LEADS');
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
   if (!sheet) { Logger.log('autoSendTick: sheet not found'); return; }
 
   var lastRow = sheet.getLastRow();
@@ -489,18 +590,20 @@ function autoSendTick() {
     // Pull phone (D) and status (AJ) for the whole sheet in two batched reads.
     var n        = lastRow - 1;
     var phones   = sheet.getRange(2, PHONE_COL,     n, 1).getValues();
-    var statuses = sheet.getRange(2, WA_STATUS_COL, n, 1).getValues();
+    var statuses = sheet.getRange(2, _waStatusCol(sheet), n, 1).getValues();
 
     var picks = [];   // { row, isRetry }
     for (var i = 0; i < n && picks.length < AUTO_BATCH; i++) {
+      var absRow = i + 2;
+      if (absRow < MIN_ROW_TO_SEND) continue;   // hard floor
       var phone  = String(phones[i][0]   || '').trim();
       var status = String(statuses[i][0] || '').trim();
       if (!phone) continue;
 
       if (status === '') {
-        picks.push({ row: i + 2, isRetry: false });
+        picks.push({ row: absRow, isRetry: false });
       } else if (retryOnce && status.indexOf('WA_FAILED:') === 0 && status.indexOf('WA_FAILED2:') !== 0) {
-        picks.push({ row: i + 2, isRetry: true });
+        picks.push({ row: absRow, isRetry: true });
       }
     }
 
@@ -544,9 +647,9 @@ function autoSendTick() {
 function _sendRowAuto(sheet, row, url, secret, isRetry) {
   var r = _sendRow(sheet, row, url, secret);
   if (isRetry && r.status === 'failed') {
-    var current = String(sheet.getRange(row, WA_STATUS_COL).getValue());
+    var current = String(sheet.getRange(row, _waStatusCol(sheet)).getValue());
     if (current.indexOf('WA_FAILED:') === 0) {
-      sheet.getRange(row, WA_STATUS_COL).setValue('WA_FAILED2:' + current.substring('WA_FAILED:'.length));
+      sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_FAILED2:' + current.substring('WA_FAILED:'.length));
     }
   }
   return r;
@@ -572,4 +675,146 @@ function setupTrigger() {
     .create();
 
   Logger.log('onFormSubmit trigger installed successfully');
+}
+
+
+// -----------------------------------------------------------------
+// Column-shift repair tools (run by hand from the editor)
+// -----------------------------------------------------------------
+
+/**
+ * READ-ONLY diagnostic. Select auditWaColumns > Run, then View > Logs.
+ *
+ * Reports every column holding WA_SENT / WA_FAILED / WA_SKIPPED values and
+ * says whether the script is currently looking at the right one. Run this any
+ * time the dashboard suddenly shows thousands of rows as pending: that is the
+ * signature of an inserted column having displaced the status column.
+ */
+function auditWaColumns() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
+  if (!sheet) { Logger.log('Sheet "Mentoring-arabic" not found'); return; }
+
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2) { Logger.log('No data rows'); return; }
+
+  var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  var found  = [];
+
+  for (var c = 0; c < lastCol; c++) {
+    var sent = 0, failed = 0, skipped = 0;
+    for (var r = 0; r < values.length; r++) {
+      var v = String(values[r][c] || '');
+      if      (v.indexOf('WA_SENT')    === 0) sent++;
+      else if (v.indexOf('WA_FAILED')  === 0) failed++;
+      else if (v.indexOf('WA_SKIPPED') === 0) skipped++;
+    }
+    if (sent + failed + skipped > 0) {
+      found.push({ col: c + 1, sent: sent, failed: failed, skipped: skipped });
+    }
+  }
+
+  var active = _waCols(sheet);
+  Logger.log('Script is reading and writing column ' + active.status +
+             ' (status) and ' + active.time + ' (timestamp)');
+
+  if (found.length === 0) { Logger.log('No WA_* values anywhere in the sheet'); return; }
+
+  for (var i = 0; i < found.length; i++) {
+    var f = found[i];
+    Logger.log('  column ' + f.col + ': ' + f.sent + ' sent, ' + f.failed +
+               ' failed, ' + f.skipped + ' skipped' +
+               (f.col === active.status ? '   <-- the one in use' : ''));
+  }
+
+  if (found.length < 2) return;
+
+  // More than one column holds statuses. That is only dangerous when a stray
+  // column knows about a row the live column does not, because those rows read
+  // as never-contacted and would be messaged again. Leftover copies of rows the
+  // live column already covers are harmless.
+  var unseen = 0;
+  for (var j = 0; j < found.length; j++) {
+    if (found[j].col === active.status) continue;
+    for (var k = 0; k < values.length; k++) {
+      var stray = String(values[k][found[j].col - 1] || '');
+      var live  = String(values[k][active.status - 1] || '');
+      if (stray.indexOf('WA_') === 0 && live.indexOf('WA_') !== 0) unseen++;
+    }
+  }
+
+  if (unseen > 0) {
+    Logger.log('WARNING: ' + unseen + ' rows have a status in another column but ' +
+               'none in column ' + active.status + '. The auto loop would message ' +
+               'them again. Run migrateWaColumns(<status col>, <timestamp col>) ' +
+               'before enabling it.');
+  } else {
+    Logger.log('OK: column ' + active.status + ' covers every row the other ' +
+               'columns know about. The rest are leftover copies and can be cleared.');
+  }
+}
+
+/**
+ * ONE-TIME REPAIR. Consolidates a displaced status pair into the live one.
+ *
+ * After the Sept 2026 utm_* insert the old history sat in AO/AP, so:
+ *     migrateWaColumns(41, 42)
+ *
+ * Copies only into cells that are currently blank, so anything newer already
+ * in the live columns wins and nothing is overwritten. The source columns are
+ * left untouched; check the result with auditWaColumns, then clear them by hand.
+ */
+function migrateWaColumns(fromStatusCol, fromTimeCol) {
+  fromStatusCol = parseInt(fromStatusCol, 10);
+  fromTimeCol   = parseInt(fromTimeCol, 10);
+  if (!fromStatusCol || !fromTimeCol) {
+    Logger.log('Call it as migrateWaColumns(<status column>, <timestamp column>), e.g. migrateWaColumns(41, 42)');
+    return;
+  }
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
+  if (!sheet) { Logger.log('Sheet "Mentoring-arabic" not found'); return; }
+
+  var to = _waCols(sheet);
+  if (fromStatusCol === to.status) {
+    Logger.log('Source and target are the same column (' + to.status + '); nothing to do');
+    return;
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('No data rows'); return; }
+  var n = lastRow - 1;
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) { Logger.log('Another execution is running'); return; }
+
+  try {
+    var srcStatus = sheet.getRange(2, fromStatusCol, n, 1).getValues();
+    var srcTime   = sheet.getRange(2, fromTimeCol,   n, 1).getValues();
+    var dstStatus = sheet.getRange(2, to.status,     n, 1).getValues();
+    var dstTime   = sheet.getRange(2, to.time,       n, 1).getValues();
+
+    var copied = 0, kept = 0;
+
+    for (var i = 0; i < n; i++) {
+      var src = String(srcStatus[i][0] || '').trim();
+      var dst = String(dstStatus[i][0] || '').trim();
+      if (!src) continue;
+      if (dst) { kept++; continue; }       // target already newer, leave it
+      dstStatus[i][0] = srcStatus[i][0];
+      dstTime[i][0]   = srcTime[i][0];
+      copied++;
+    }
+
+    sheet.getRange(2, to.status, n, 1).setValues(dstStatus);
+    sheet.getRange(2, to.time,   n, 1).setValues(dstTime);
+
+    Logger.log('migrateWaColumns: copied ' + copied + ' rows from column ' +
+               fromStatusCol + ' into column ' + to.status + '; left ' + kept +
+               ' rows alone because the target already had a newer value.');
+    Logger.log('Source column ' + fromStatusCol + ' was NOT cleared. ' +
+               'Run auditWaColumns to verify, then clear it manually.');
+  } finally {
+    lock.releaseLock();
+  }
 }

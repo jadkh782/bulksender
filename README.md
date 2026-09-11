@@ -56,7 +56,7 @@ The toggle uses the path `/api/send` (relative). If you open `index.html` from `
 
 ```
 Google Form submitted
-  → new row in "new LEADS" sheet
+  → new row in "Mentoring-arabic" sheet
   → Apps Script fires onFormSubmit
   → POSTs phone + name to <worker>/api/auto-send
   → Worker calls 360dialog
@@ -75,8 +75,45 @@ Google Form submitted
 ### Test
 
 Submit your Google Form. Within a few seconds the new row should show:
-- Column AJ: `WA_SENT: <message-id>` or `WA_FAILED: <reason>`
-- Column AK: timestamp
+- `WA_SENT: <message-id>` or `WA_FAILED: <reason>` under the **WA Status** header
+- a timestamp under the **WA Sent At** header
+
+### How the status columns are located
+
+The script does **not** use a fixed column number. It finds its two columns by
+the labels `WA Status` and `WA Sent At` in row 1, so inserting a column in the
+middle of the sheet moves the header along with the data and the lookup follows
+it. The first run stamps those labels into AJ/AK if they are missing.
+
+This matters because it already broke once. In September 2026 five `utm_*`
+columns were inserted at J, which pushed the status pair from AJ/AK to AO/AP.
+The script kept writing to AJ, lost sight of ~3,000 completed sends, and would
+have messaged every one of those people a second time.
+
+### Not messaging the same person twice
+
+473 numbers in this sheet appear on more than one row, because people fill the
+form more than once. A per-row status is therefore not enough on its own. Every
+send path checks the **number**, not just the row: if the same number already
+has a `WA_SENT` anywhere in the sheet, the row is marked
+`WA_SKIPPED: same number already messaged on row N` instead of being sent.
+
+To message somebody deliberately anyway, clear the status on the row it names
+first. Rows whose phone column holds fewer than 8 digits (a few contain a name)
+are skipped locally rather than spending a request to be rejected.
+
+All three entry points — the form trigger, the dashboard, and the auto loop —
+now go through one function, `_sendRow`, so the hard floor, the duplicate check
+and the response handling cannot drift apart between them.
+
+### Repair tools
+
+Run these by hand from the Apps Script editor, then check **View → Logs**.
+
+| Function | What it does |
+|---|---|
+| `auditWaColumns()` | Read-only. Lists every column holding `WA_*` values and warns if any row has a status somewhere the script cannot see. Run it whenever the dashboard suddenly shows thousands of rows as pending. |
+| `migrateWaColumns(from, from+1)` | One-time consolidation. Copies a displaced status pair into the live one, writing only into blank cells so nothing newer is overwritten. Leaves the source columns intact for you to check and clear. |
 
 ### Test the webhook directly
 
@@ -89,7 +126,9 @@ curl -X POST https://bulksender.<your-subdomain>.workers.dev/api/auto-send \
 
 ### Retrying failed sends
 
-Clear the WA status cell (Column AJ) for any failed row, then run `manualProcessPending` from the Apps Script editor. It re-processes any row with a phone but no WA status.
+Clear the cell under **WA Status** for any failed row, then run `manualProcessPending` from the Apps Script editor. It re-processes any row with a phone but no WA status.
+
+Failures whose reason begins `upstream HTTP 5xx (non-JSON)` are transient: 360dialog sat behind a Cloudflare edge that could not reach it. They are always worth retrying. The response also carries `retryable: true` for those.
 
 ## Dashboard tab
 

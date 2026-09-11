@@ -148,9 +148,15 @@ async function handleAutoSend(request, env) {
       body: JSON.stringify(payload)
     });
 
-    const data = await upstream.json();
+    // 360dialog sits behind Cloudflare. When its origin is unreachable the edge
+    // answers with a plain-text page ("error code: 522"), not JSON. Parsing that
+    // blind used to leak a SyntaxError into the sheet as the send "reason", which
+    // hid the fact that the send was a retryable network failure.
+    const raw  = await upstream.text();
+    let   data = null;
+    try { data = JSON.parse(raw); } catch { /* non-JSON upstream body */ }
 
-    if (upstream.ok && data.messages && data.messages[0]) {
+    if (upstream.ok && data && data.messages && data.messages[0]) {
       return json({
         success: true,
         messageId: data.messages[0].id,
@@ -158,8 +164,21 @@ async function handleAutoSend(request, env) {
       });
     }
 
+    if (!data) {
+      // Upstream spoke HTML/text. Surface the status so the caller can tell a
+      // transient edge failure (502/503/504/520-527) from a real API rejection.
+      return json({
+        success: false,
+        retryable: upstream.status >= 500,
+        error: 'upstream HTTP ' + upstream.status + ' (non-JSON): ' +
+               raw.replace(/\s+/g, ' ').trim().slice(0, 120),
+        phone: cleanPhone
+      }, upstream.status);
+    }
+
     return json({
       success: false,
+      retryable: upstream.status >= 500,
       error: data.error?.message || data.message || JSON.stringify(data),
       phone: cleanPhone
     }, upstream.status);

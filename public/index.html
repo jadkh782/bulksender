@@ -808,6 +808,7 @@
         <button id="dashAutoApplyBtn" onclick="dashSaveAuto()">Apply</button>
       </div>
       <p class="hint">Runs in Google's infrastructure — no tab needed once enabled. Drains up to 50 rows per tick.</p>
+      <p class="hint" id="dashAutoFloor" style="color:var(--accent);"></p>
     </div>
 
     <!-- Stats -->
@@ -1356,7 +1357,13 @@
     }
 
     function dashRenderAuto(auto) {
-      auto = auto || { enabled: false, intervalMin: 0, retryOnce: false, lastTick: '', haltReason: '' };
+      auto = auto || { enabled: false, intervalMin: 0, retryOnce: false, lastTick: '', haltReason: '', minRow: 0 };
+      var floorEl = document.getElementById('dashAutoFloor');
+      if (auto.minRow && auto.minRow > 2) {
+        floorEl.textContent = '🔒 Hard floor active — rows below ' + auto.minRow + ' will NEVER be contacted by any send path.';
+      } else {
+        floorEl.textContent = '';
+      }
       // Don't clobber controls while the user is mid-edit (Apply not yet clicked).
       if (!dashAutoDirty) {
         document.getElementById('dashAutoInterval').value =
