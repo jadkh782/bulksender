@@ -656,8 +656,17 @@ function test360Reachable() {
     Logger.log('HTTP ' + code + ' in ' + secs + 's');
     Logger.log('Body: ' + (response.getContentText() || '').substring(0, 200));
     Logger.log(code === 401
-      ? 'Reachable. Set D360_API_KEY in Script Properties and sends go direct.'
+      ? 'Reachable: Apps Script can talk to 360dialog.'
       : 'Unexpected. A 5xx here means the network path is at fault, not the key.');
+
+    // Say which route is actually live, rather than telling you to set a key you
+    // may already have set.
+    var cfg = _sendCfg();
+    Logger.log(cfg.apiKey
+      ? 'D360_API_KEY is set, so sends go direct. Template "' + cfg.template +
+        '" in "' + cfg.lang + '"' + (cfg.paramName ? ', parameter "' + cfg.paramName + '"' : '') + '.'
+      : 'D360_API_KEY is NOT set, so sends still go through the Worker. ' +
+        'Add it under Project Settings > Script Properties to use the direct route.');
   } catch (err) {
     Logger.log('Could not reach 360dialog at all: ' + err.message);
   }

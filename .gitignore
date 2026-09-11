@@ -2,3 +2,9 @@
 .env
 node_modules
 .wrangler
+
+# Never commit credentials.
+apikey.txt
+*apikey*
+*.key
+*secret*
