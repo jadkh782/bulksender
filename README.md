@@ -141,6 +141,31 @@ insert carries the labels along and the write position follows automatically.
 Without it the write position stays fixed at AJ/AK, which is still safe because
 reads are merged either way.
 
+### Testing on new arrivals only
+
+The two automatic paths do different things, and it is worth being clear about
+which one you are switching on.
+
+| | What it messages |
+|---|---|
+| `onFormSubmit` trigger | only the row that was just submitted |
+| `autoSendTick` loop | every row with no status, oldest first |
+
+The loop drains the backlog. On the current sheet that is 928 rows going back to
+May, and it reaches today's leads last. That is rarely what you want on a first
+run.
+
+To test the form trigger safely, run **`armNewRowsOnly()`** from the editor. It
+reads where the sheet ends and puts the send floor one row above it, so every
+lead already present becomes unreachable by every send path and only rows added
+afterwards can be contacted. It writes a Script Property, never a sheet cell.
+Undo with `clearRowFloor()`.
+
+The floor is enforced inside `_sendRow`, so the loop, a dashboard send and the
+form trigger all obey it. `MIN_ROW_TO_SEND` in the script is an absolute minimum
+that the property can raise but never lower; negative or non-numeric values are
+ignored.
+
 ### Not messaging the same person twice
 
 473 numbers in this sheet appear on more than one row, because people fill the

@@ -50,12 +50,62 @@ var WA_TIME_COL    = 37; // Column AK
 var AUTO_TICK_FN = 'autoSendTick';
 var AUTO_BATCH   = 50;
 
-// HARD SAFETY FLOOR — rows BELOW this number are NEVER contacted by any
-// send path (auto loop, dashboard manual send, form-submit trigger).
-// This is enforced inside _sendRow itself, so even a buggy caller can't
-// bypass it. Raising this requires editing Code.gs and redeploying —
-// intentional, so no UI input or stale config can lower it.
+// HARD SAFETY FLOOR - rows BELOW the floor are NEVER contacted by any send
+// path: the auto loop, a dashboard send, or the form-submit trigger. It is
+// enforced inside _sendRow itself, so even a buggy caller cannot bypass it.
+//
+// This constant is the absolute minimum. armNewRowsOnly() can raise the floor
+// above it, never below, which is how you test on new arrivals only without
+// exposing the backlog.
 var MIN_ROW_TO_SEND = 2;
+
+var _minRowCache = null;
+
+// The floor actually in force: the constant above, or a higher one armed by
+// armNewRowsOnly(). Never lower than the constant, so a stray property cannot
+// open up rows the code says are off limits.
+function _minRow() {
+  if (_minRowCache) return _minRowCache;
+  var armed = parseInt(
+    PropertiesService.getScriptProperties().getProperty('MIN_ROW_TO_SEND') || '0', 10);
+  _minRowCache = (!isNaN(armed) && armed > MIN_ROW_TO_SEND) ? armed : MIN_ROW_TO_SEND;
+  return _minRowCache;
+}
+
+/**
+ * Run this to message ONLY people who arrive from now on.
+ *
+ * It reads where the sheet currently ends and puts the floor one row above it,
+ * so every lead already in the sheet becomes permanently out of reach for every
+ * send path, and only rows added after this moment can be contacted. Use it to
+ * test the form trigger without risking the backlog.
+ *
+ * Undo with clearRowFloor().
+ */
+function armNewRowsOnly() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet) { Logger.log('Sheet "' + SHEET_NAME + '" not found'); return; }
+
+  var lastRow = sheet.getLastRow();
+  var floor   = lastRow + 1;
+
+  PropertiesService.getScriptProperties().setProperty('MIN_ROW_TO_SEND', String(floor));
+  _minRowCache = null;
+
+  Logger.log('Sheet currently ends at row ' + lastRow + '.');
+  Logger.log('Floor armed at row ' + floor + '. Rows 2-' + lastRow +
+             ' can no longer be contacted by any send path.');
+  Logger.log('The next form submission lands at row ' + floor + ' and WILL be messaged.');
+  Logger.log('Undo with clearRowFloor().');
+}
+
+/** Removes the armed floor, putting the whole sheet back in reach. */
+function clearRowFloor() {
+  PropertiesService.getScriptProperties().deleteProperty('MIN_ROW_TO_SEND');
+  _minRowCache = null;
+  Logger.log('Floor cleared. Back to the built-in minimum, row ' + MIN_ROW_TO_SEND +
+             ', so the whole sheet is reachable again.');
+}
 
 // -----------------------------------------------------------------
 // Locating the two status columns
@@ -265,7 +315,7 @@ function onFormSubmit(e) {
 
   // Hard floor - refuse to contact anything below the send floor, even if
   // a form submission somehow lands there.
-  if (row < MIN_ROW_TO_SEND) return;
+  if (row < _minRow()) return;
 
   var props  = PropertiesService.getScriptProperties();
   var url    = props.getProperty('WEBHOOK_URL');
@@ -460,7 +510,7 @@ function _autoSendStatus(props) {
     lastTick:    props.getProperty('AUTO_SEND_LAST_TICK')   || '',
     haltReason:  props.getProperty('AUTO_SEND_HALT_REASON') || '',
     haltAt:      props.getProperty('AUTO_SEND_HALT_AT')     || '',
-    minRow:      MIN_ROW_TO_SEND
+    minRow:      _minRow()
   };
 }
 
@@ -496,8 +546,8 @@ function doPost(e) {
   }
 
   var rows = body.rows.slice(0, SEND_BATCH_CAP).map(function(r) { return parseInt(r, 10); })
-                      .filter(function(r) { return !isNaN(r) && r >= MIN_ROW_TO_SEND; });
-  if (rows.length === 0) return _json({ error: 'No valid rows (all below send floor row ' + MIN_ROW_TO_SEND + ')' });
+                      .filter(function(r) { return !isNaN(r) && r >= _minRow(); });
+  if (rows.length === 0) return _json({ error: 'No valid rows (all below send floor row ' + _minRow() + ')' });
 
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
   if (!sheet) return _json({ error: 'Sheet "' + SHEET_NAME + '" not found' });
@@ -676,9 +726,9 @@ function test360Reachable() {
 // Sends one row, by whichever transport is configured, and writes the outcome.
 // Returns { row, status: 'sent'|'failed'|'skipped', detail }.
 function _sendRow(sheet, row, url, secret) {
-  // Hard floor: never contact rows below MIN_ROW_TO_SEND, no matter who calls us.
-  if (row < MIN_ROW_TO_SEND) {
-    return { row: row, status: 'skipped', detail: 'below send floor (row ' + MIN_ROW_TO_SEND + ')', httpCode: 0 };
+  // Hard floor: never contact rows below the floor, no matter who calls us.
+  if (row < _minRow()) {
+    return { row: row, status: 'skipped', detail: 'below send floor (row ' + _minRow() + ')', httpCode: 0 };
   }
 
   var phone     = String(sheet.getRange(row, PHONE_COL).getValue()).trim();
@@ -833,7 +883,7 @@ function autoSendTick() {
 
     for (var i = 0; i < rows.length && picks.length < AUTO_BATCH; i++) {
       var absRow = i + 2;
-      if (absRow < MIN_ROW_TO_SEND) continue;   // hard floor
+      if (absRow < _minRow()) continue;   // hard floor
       var phone  = String(rows[i][PHONE_COL - 1] || '').trim();
       if (!phone) continue;
       var status = _statusAt(sheet, absRow).status;
