@@ -3,9 +3,15 @@
  *
  * Install this in your Google Sheet via Extensions > Apps Script.
  *
- * Required Script Properties (Project Settings > Script Properties):
- *   WEBHOOK_URL    – e.g. https://bulksender.<subdomain>.workers.dev/api/auto-send
- *   WEBHOOK_SECRET – same value set with `wrangler secret put WEBHOOK_SECRET`
+ * Script Properties (Project Settings > Script Properties):
+ *   D360_API_KEY   – 360dialog API key. Present means sends go straight to
+ *                    360dialog, which is the route you want. See _sendCfg.
+ *   WEBHOOK_SECRET – token the dashboard must present to doGet/doPost. Also the
+ *                    bearer token when falling back to the Worker.
+ *   WEBHOOK_URL    – only needed for that fallback, e.g.
+ *                    https://bulksender.<subdomain>.workers.dev/api/auto-send
+ *   TEMPLATE_NAME, TEMPLATE_LANG, TEMPLATE_PARAM_NAME – optional overrides;
+ *                    they default to welcome_message / ar / none.
  *
  * Sheet: "Mentoring-arabic"  (layout as of Sept 2026)
  *   Col A: First name
@@ -265,8 +271,8 @@ function onFormSubmit(e) {
   var url    = props.getProperty('WEBHOOK_URL');
   var secret = props.getProperty('WEBHOOK_SECRET');
 
-  if (!url || !secret) {
-    _writeStatus(sheet, row, 'WA_FAILED: missing script properties', new Date().toISOString());
+  if (!_hasTransport(props)) {
+    _writeStatus(sheet, row, 'WA_FAILED: no send transport configured', new Date().toISOString());
     return;
   }
 
@@ -289,8 +295,8 @@ function manualProcessPending() {
   var url    = props.getProperty('WEBHOOK_URL');
   var secret = props.getProperty('WEBHOOK_SECRET');
 
-  if (!url || !secret) {
-    Logger.log('Missing WEBHOOK_URL or WEBHOOK_SECRET in Script Properties');
+  if (!_hasTransport(props)) {
+    Logger.log('No send transport. Set D360_API_KEY, or both WEBHOOK_URL and WEBHOOK_SECRET, in Script Properties.');
     return;
   }
 
@@ -472,7 +478,7 @@ function doPost(e) {
   var token  = (e && e.parameter && e.parameter.token) || '';
 
   if (!secret || token !== secret) return _json({ error: 'Unauthorized' });
-  if (!url)                        return _json({ error: 'WEBHOOK_URL missing in Script Properties' });
+  if (!_hasTransport(props))       return _json({ error: 'No send transport. Set D360_API_KEY, or both WEBHOOK_URL and WEBHOOK_SECRET, in Script Properties.' });
 
   var body;
   try {
@@ -513,7 +519,152 @@ function doPost(e) {
   return _json({ results: results });
 }
 
-// Sends one row through WEBHOOK_URL and writes the outcome back to the sheet.
+// -----------------------------------------------------------------
+// Talking to 360dialog
+// -----------------------------------------------------------------
+//
+// Two transports. Direct is used whenever a D360_API_KEY Script Property
+// exists, and is the one you want.
+//
+//   direct   Apps Script -> 360dialog
+//   webhook  Apps Script -> Cloudflare Worker -> 360dialog
+//
+// The webhook route broke on 11 Sept 2026. 360dialog answered an ordinary
+// machine in 0.34s and is not itself behind Cloudflare, yet every fetch from
+// the Worker came back a Cloudflare 522 after ~20s, three times out of three,
+// while that same Worker reached script.google.com in 0.33s. Cloudflare's
+// network could not open a connection to 360dialog. Nothing in this script
+// could fix that, so it stopped routing through it.
+//
+// The webhook path is kept as a fallback and produces an identical message.
+
+var D360_URL = 'https://waba-v2.360dialog.io/messages';
+
+var _sendCfgCache = null;
+
+// Defaults match what the Worker was configured with, so switching transport
+// does not change the message anybody receives.
+function _sendCfg() {
+  if (_sendCfgCache) return _sendCfgCache;
+  var props = PropertiesService.getScriptProperties();
+  _sendCfgCache = {
+    apiKey:    props.getProperty('D360_API_KEY')        || '',
+    template:  props.getProperty('TEMPLATE_NAME')       || 'welcome_message',
+    lang:      props.getProperty('TEMPLATE_LANG')       || 'ar',
+    paramName: props.getProperty('TEMPLATE_PARAM_NAME') || ''
+  };
+  return _sendCfgCache;
+}
+
+// True when at least one transport is configured.
+function _hasTransport(props) {
+  return !!(props.getProperty('D360_API_KEY') ||
+           (props.getProperty('WEBHOOK_URL') && props.getProperty('WEBHOOK_SECRET')));
+}
+
+function _templatePayload(cleanPhone, name, cfg) {
+  var template = { name: cfg.template, language: { code: cfg.lang } };
+  if (cfg.paramName && name) {
+    template.components = [{
+      type: 'body',
+      parameters: [{ type: 'text', parameter_name: cfg.paramName, text: String(name) }]
+    }];
+  }
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: cleanPhone,
+    type: 'template',
+    template: template
+  };
+}
+
+// Reads a 360dialog or Worker reply without assuming it is JSON, because a
+// failing edge answers with a plain-text page. Returns { ok, messageId, error,
+// httpCode }.
+function _readReply(response, pick) {
+  var httpCode = response.getResponseCode();
+  var raw      = response.getContentText() || '';
+  var data     = null;
+  try { data = JSON.parse(raw); } catch (e) { /* not JSON */ }
+
+  if (data) {
+    var id = pick(httpCode, data);
+    if (id) return { ok: true, messageId: id, httpCode: httpCode };
+    var msg = (data.error && data.error.message) || data.message || data.error ||
+              JSON.stringify(data);
+    return { ok: false, error: String(msg), httpCode: httpCode };
+  }
+
+  return {
+    ok: false,
+    httpCode: httpCode,
+    error: 'upstream HTTP ' + httpCode + ' (non-JSON): ' +
+           (raw.replace(/\s+/g, ' ').trim().substring(0, 120) || 'empty body')
+  };
+}
+
+function _send360(cleanPhone, name, cfg) {
+  return _readReply(
+    UrlFetchApp.fetch(D360_URL, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'D360-API-KEY': cfg.apiKey },
+      payload: JSON.stringify(_templatePayload(cleanPhone, name, cfg)),
+      muteHttpExceptions: true
+    }),
+    function (code, data) {
+      return (code >= 200 && code < 300 && data.messages && data.messages[0])
+        ? data.messages[0].id : null;
+    });
+}
+
+function _sendViaWebhook(phone, name, url, secret) {
+  return _readReply(
+    UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'Authorization': 'Bearer ' + secret },
+      payload: JSON.stringify({ phone: phone, name: name }),
+      muteHttpExceptions: true
+    }),
+    function (code, data) {
+      return (code === 200 && data.success) ? (data.messageId || 'ok') : null;
+    });
+}
+
+/**
+ * Changes nothing and messages nobody. Run it, then View > Logs.
+ *
+ * Asks 360dialog one question using a deliberately invalid key. A 401 saying
+ * "Invalid api token" is the result you want: it proves Apps Script can reach
+ * 360dialog, so direct sending will work. A 5xx after roughly 20 seconds means
+ * the network path is the problem rather than the credentials.
+ */
+function test360Reachable() {
+  var started = new Date().getTime();
+  try {
+    var response = UrlFetchApp.fetch(D360_URL, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'D360-API-KEY': 'invalid-probe-key' },
+      payload: JSON.stringify({ messaging_product: 'whatsapp', to: '000', type: 'text' }),
+      muteHttpExceptions: true
+    });
+    var secs = ((new Date().getTime() - started) / 1000).toFixed(2);
+    var code = response.getResponseCode();
+    Logger.log('HTTP ' + code + ' in ' + secs + 's');
+    Logger.log('Body: ' + (response.getContentText() || '').substring(0, 200));
+    Logger.log(code === 401
+      ? 'Reachable. Set D360_API_KEY in Script Properties and sends go direct.'
+      : 'Unexpected. A 5xx here means the network path is at fault, not the key.');
+  } catch (err) {
+    Logger.log('Could not reach 360dialog at all: ' + err.message);
+  }
+}
+
+
+// Sends one row, by whichever transport is configured, and writes the outcome.
 // Returns { row, status: 'sent'|'failed'|'skipped', detail }.
 function _sendRow(sheet, row, url, secret) {
   // Hard floor: never contact rows below MIN_ROW_TO_SEND, no matter who calls us.
@@ -545,30 +696,18 @@ function _sendRow(sheet, row, url, secret) {
   }
 
   try {
-    var response = UrlFetchApp.fetch(url, {
-      method: 'post',
-      contentType: 'application/json',
-      headers: { 'Authorization': 'Bearer ' + secret },
-      payload: JSON.stringify({ phone: phone, name: firstName }),
-      muteHttpExceptions: true
-    });
+    var cfg = _sendCfg();
+    var r   = cfg.apiKey ? _send360(clean, firstName, cfg)
+                         : _sendViaWebhook(phone, firstName, url, secret);
 
-    var httpCode = response.getResponseCode();
-    var raw      = response.getContentText() || '';
-    var result   = {};
-    try { result = JSON.parse(raw); } catch (parseErr) { /* leave empty; raw used below */ }
-
-    if (httpCode === 200 && result.success) {
-      var id = result.messageId || 'ok';
-      _writeStatus(sheet, row, 'WA_SENT: ' + id, now);
+    if (r.ok) {
+      _writeStatus(sheet, row, 'WA_SENT: ' + r.messageId, now);
       seen[clean] = row;   // later rows with this number now skip
-      return { row: row, status: 'sent', detail: id, httpCode: httpCode };
+      return { row: row, status: 'sent', detail: r.messageId, httpCode: r.httpCode };
     }
 
-    var err = result.error
-            || ('HTTP ' + httpCode + (raw ? ' — ' + raw.substring(0, 120) : ' — empty body'));
-    _writeStatus(sheet, row, 'WA_FAILED: ' + err, now);
-    return { row: row, status: 'failed', detail: err, httpCode: httpCode };
+    _writeStatus(sheet, row, 'WA_FAILED: ' + r.error, now);
+    return { row: row, status: 'failed', detail: r.error, httpCode: r.httpCode };
   } catch (err) {
     _writeStatus(sheet, row, 'WA_FAILED: ' + err.message, now);
     return { row: row, status: 'failed', detail: err.message, httpCode: 0 };
@@ -663,8 +802,8 @@ function autoSendTick() {
 
   var url    = props.getProperty('WEBHOOK_URL');
   var secret = props.getProperty('WEBHOOK_SECRET');
-  if (!url || !secret) {
-    Logger.log('autoSendTick: missing WEBHOOK_URL or WEBHOOK_SECRET');
+  if (!_hasTransport(props)) {
+    Logger.log('autoSendTick: no send transport. Set D360_API_KEY, or both WEBHOOK_URL and WEBHOOK_SECRET, in Script Properties.');
     return;
   }
   var retryOnce = props.getProperty('AUTO_SEND_RETRY') === '1';

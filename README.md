@@ -58,19 +58,51 @@ The toggle uses the path `/api/send` (relative). If you open `index.html` from `
 Google Form submitted
   → new row in "Mentoring-arabic" sheet
   → Apps Script fires onFormSubmit
-  → POSTs phone + name to <worker>/api/auto-send
-  → Worker calls 360dialog
+  → Apps Script calls 360dialog
   → Apps Script writes WA_SENT / WA_FAILED to the row
 ```
+
+### Why the Worker is not in that path
+
+It used to be, and on 11 September 2026 it stopped working. Measured three ways:
+
+| From | To | Result |
+|---|---|---|
+| An ordinary machine | 360dialog | HTTP 401 JSON in 0.34s |
+| The Cloudflare Worker | 360dialog | HTTP 522 in 19.7s, three out of three |
+| The Cloudflare Worker | script.google.com | HTTP 404 in 0.33s |
+
+360dialog was healthy, answers in a third of a second, and is not itself behind
+Cloudflare. The Worker's egress was fine for other hosts. The single broken hop
+was Cloudflare's network opening a connection to 360dialog, which it could not
+do, so Cloudflare synthesised a 522 after its connect timeout.
+
+Nothing in this repo could fix that, so the send path stopped going through it.
+Apps Script runs on Google's network and reaches 360dialog directly. The Worker
+still serves the UI and still proxies the dashboard's calls to Apps Script, both
+of which work.
+
+The payload is unchanged. A test asserts the JSON Apps Script sends is identical
+to what the Worker used to send, so nobody receives a different message.
 
 ### Apps Script setup
 
 1. Open your Google Sheet → **Extensions → Apps Script**.
 2. Delete the default code, paste the contents of `google-apps-script/Code.gs`.
 3. **Project Settings → Script Properties**, add:
-   - `WEBHOOK_URL` = `https://bulksender.<your-subdomain>.workers.dev/api/auto-send`
-   - `WEBHOOK_SECRET` = the same value you `wrangler secret put` for the Worker
-4. Back in the editor, select **`setupTrigger`** from the dropdown and click **Run**. Authorize when prompted.
+   - `D360_API_KEY` = your 360dialog API key. Its presence is what selects the direct route.
+   - `WEBHOOK_SECRET` = any long random string. The dashboard must present it to connect.
+4. Select **`test360Reachable`** from the dropdown and **Run**. It messages nobody.
+   A `HTTP 401 … Invalid api token` reply is the good outcome: it proves Apps
+   Script can reach 360dialog. A 5xx after ~20 seconds means the network path is
+   at fault rather than the key.
+5. Select **`setupTrigger`** and **Run**. Authorize when prompted.
+
+Optional, only if you ever want the Worker back in the path: drop `D360_API_KEY`
+and set `WEBHOOK_URL` to `https://bulksender.<subdomain>.workers.dev/api/auto-send`
+with `WEBHOOK_SECRET` matching the Worker's. `TEMPLATE_NAME`, `TEMPLATE_LANG` and
+`TEMPLATE_PARAM_NAME` are optional overrides and default to `welcome_message`,
+`ar` and none.
 
 ### Test
 
