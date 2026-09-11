@@ -78,17 +78,36 @@ Submit your Google Form. Within a few seconds the new row should show:
 - `WA_SENT: <message-id>` or `WA_FAILED: <reason>` under the **WA Status** header
 - a timestamp under the **WA Sent At** header
 
-### How the status columns are located
+### What this script is allowed to change
 
-The script does **not** use a fixed column number. It finds its two columns by
-the labels `WA Status` and `WA Sent At` in row 1, so inserting a column in the
-middle of the sheet moves the header along with the data and the lookup follows
-it. The first run stamps those labels into AJ/AK if they are missing.
+Only two cells per row it processes: the status and its timestamp. Nothing else
+in the sheet is ever written. Lead data, the manual `statuis` column and the
+older status columns are read and left alone.
 
-This matters because it already broke once. In September 2026 five `utm_*`
-columns were inserted at J, which pushed the status pair from AJ/AK to AO/AP.
-The script kept writing to AJ, lost sight of ~3,000 completed sends, and would
-have messaged every one of those people a second time.
+There is exactly one exception, and it is opt-in: `labelStatusColumns()` writes
+two header labels into row 1, and only if those cells are empty. See below.
+
+### Finding the status, after the columns moved
+
+In September 2026 five `utm_*` columns were inserted at J. Everything to their
+right shifted five places, so about 3,000 completed sends moved from AJ/AK to
+AO/AP while new ones kept landing in AJ. The script was reading AJ only, so it
+lost sight of those 3,000 people and would have messaged all of them again.
+
+Consolidating the two columns would mean rewriting thousands of cells, so the
+script does not do that. Instead **reads consider every column that holds
+`WA_*` values**, and a row counts as handled if any of them says so. New
+outcomes are still written to one place, so the sheet does not sprawl.
+
+Run `checkStatusColumns()` from the editor to see which columns are in play. It
+changes nothing. Run it whenever the dashboard numbers look wrong: a jump in
+"pending" is the signature of another column insert.
+
+`labelStatusColumns()` is the optional tidy-up. It writes `WA Status` and
+`WA Sent At` into row 1 above the two columns the script writes, so a future
+insert carries the labels along and the write position follows automatically.
+Without it the write position stays fixed at AJ/AK, which is still safe because
+reads are merged either way.
 
 ### Not messaging the same person twice
 
@@ -102,18 +121,9 @@ To message somebody deliberately anyway, clear the status on the row it names
 first. Rows whose phone column holds fewer than 8 digits (a few contain a name)
 are skipped locally rather than spending a request to be rejected.
 
-All three entry points — the form trigger, the dashboard, and the auto loop —
-now go through one function, `_sendRow`, so the hard floor, the duplicate check
-and the response handling cannot drift apart between them.
-
-### Repair tools
-
-Run these by hand from the Apps Script editor, then check **View → Logs**.
-
-| Function | What it does |
-|---|---|
-| `auditWaColumns()` | Read-only. Lists every column holding `WA_*` values and warns if any row has a status somewhere the script cannot see. Run it whenever the dashboard suddenly shows thousands of rows as pending. |
-| `migrateWaColumns(from, from+1)` | One-time consolidation. Copies a displaced status pair into the live one, writing only into blank cells so nothing newer is overwritten. Leaves the source columns intact for you to check and clear. |
+All three entry points, the form trigger, the dashboard and the auto loop, go
+through one function, `_sendRow`, so the hard floor, the duplicate check and the
+response handling cannot drift apart between them.
 
 ### Test the webhook directly
 
@@ -126,7 +136,7 @@ curl -X POST https://bulksender.<your-subdomain>.workers.dev/api/auto-send \
 
 ### Retrying failed sends
 
-Clear the cell under **WA Status** for any failed row, then run `manualProcessPending` from the Apps Script editor. It re-processes any row with a phone but no WA status.
+Clear the status cell for any failed row, column AJ unless you have run `labelStatusColumns()`, then run `manualProcessPending` from the Apps Script editor. It re-processes any row with a phone and no status in any of the columns it reads.
 
 Failures whose reason begins `upstream HTTP 5xx (non-JSON)` are transient: 360dialog sat behind a Cloudflare edge that could not reach it. They are always worth retrying. The response also carries `retryable: true` for those.
 

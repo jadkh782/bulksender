@@ -28,6 +28,8 @@
 
 // Column indices in the "Mentoring-arabic" sheet (1-based, for Range operations).
 // A and D sit left of every insert made so far, so they stay fixed.
+var SHEET_NAME = 'Mentoring-arabic';
+
 var FIRST_NAME_COL = 1;  // Column A
 var PHONE_COL      = 4;  // Column D
 
@@ -69,7 +71,12 @@ var WA_TIME_HEADER   = 'WA Sent At';
 
 var _waColsCache = null;
 
-// { status: <1-based col>, time: <1-based col> }. Memoized: one read per run.
+// { status: <1-based col>, time: <1-based col> }, memoized: where NEW outcomes
+// get written. Reads never rely on this alone - see _statusAt.
+//
+// Resolving by label is only possible once the labels exist, and writing them
+// is a change to the sheet, so it is opt-in via labelStatusColumns(). Until
+// then this falls back to the historical positions and writes nothing.
 function _waCols(sheet) {
   if (_waColsCache) return _waColsCache;
 
@@ -84,27 +91,125 @@ function _waCols(sheet) {
     else if (h === WA_TIME_HEADER   && !time)   time   = i + 1;
   }
 
-  if (!status || !time) {
-    // Labels absent: first run since this change. Fall back to the historical
-    // fixed positions and stamp the labels so every later run self-locates.
-    status = status || WA_STATUS_COL;
-    time   = time   || WA_TIME_COL;
-
-    var need = Math.max(status, time);
-    if (maxCol < need) sheet.insertColumnsAfter(maxCol, need - maxCol);
-
-    sheet.getRange(1, status).setValue(WA_STATUS_HEADER);
-    sheet.getRange(1, time).setValue(WA_TIME_HEADER);
-    Logger.log('_waCols: labels were missing, stamped them at columns ' +
-               status + ' and ' + time);
-  }
-
-  _waColsCache = { status: status, time: time };
+  _waColsCache = { status: status || WA_STATUS_COL, time: time || WA_TIME_COL };
   return _waColsCache;
 }
 
 function _waStatusCol(sheet) { return _waCols(sheet).status; }
 function _waTimeCol(sheet)   { return _waCols(sheet).time; }
+
+/**
+ * OPT-IN, run by hand once from the editor. Writes the two header labels into
+ * row 1 above the columns this script already writes, so that a future column
+ * insert carries them along and the write target follows automatically.
+ *
+ * This is the only function here that changes anything outside the two status
+ * columns, and it only fills two empty header cells. Everything works without
+ * it; you just keep the fixed write position.
+ */
+function labelStatusColumns() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet) { Logger.log('Sheet "' + SHEET_NAME + '" not found'); return; }
+
+  var cols = _waCols(sheet);
+  var sCell = sheet.getRange(1, cols.status);
+  var tCell = sheet.getRange(1, cols.time);
+
+  if (String(sCell.getValue()).trim() || String(tCell.getValue()).trim()) {
+    Logger.log('Row 1 above columns ' + cols.status + '/' + cols.time +
+               ' is not empty. Nothing written - check them by hand.');
+    return;
+  }
+
+  sCell.setValue(WA_STATUS_HEADER);
+  tCell.setValue(WA_TIME_HEADER);
+  Logger.log('Labelled columns ' + cols.status + ' and ' + cols.time);
+}
+
+
+// -----------------------------------------------------------------
+// Reading status without rewriting the sheet
+// -----------------------------------------------------------------
+//
+// Sept 2026: five utm_* columns were inserted at J, so ~3,000 completed sends
+// moved from AJ/AK to AO/AP while new ones kept landing in AJ. Consolidating
+// them would mean rewriting thousands of cells, which is not allowed here, so
+// instead every read considers BOTH columns and a row counts as handled if any
+// of them says so. New outcomes are still written to one place.
+
+var _gridCache = null;
+
+// One wide read of the data rows, memoized. Apps Script charges per call rather
+// than per cell, so a single wide read beats several narrow ones.
+function _grid(sheet) {
+  if (_gridCache) return _gridCache;
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  _gridCache = (lastRow < 2) ? [] : sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  return _gridCache;
+}
+
+var _statusColsCache = null;
+
+// Every column holding WA_* values, the live one first.
+function _statusCols(sheet) {
+  if (_statusColsCache) return _statusColsCache;
+
+  var live  = _waStatusCol(sheet);
+  var cols  = [live];
+  var rows  = _grid(sheet);
+  var width = rows.length ? rows[0].length : 0;
+
+  for (var c = 1; c <= width; c++) {
+    if (c === live) continue;
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][c - 1] || '').indexOf('WA_') === 0) { cols.push(c); break; }
+    }
+  }
+
+  _statusColsCache = cols;
+  return _statusColsCache;
+}
+
+// The effective status for a row plus the timestamp beside it. The live column
+// wins; otherwise the first stranded column that has one. A stranded pair is
+// assumed adjacent, which is how every pair in this sheet was written.
+function _statusAt(sheet, row) {
+  var rows = _grid(sheet);
+  var i    = row - 2;
+  var none = { status: '', time: '', col: 0 };
+  if (i < 0 || i >= rows.length) return none;
+
+  var cols = _statusCols(sheet);
+  var live = _waStatusCol(sheet);
+
+  for (var k = 0; k < cols.length; k++) {
+    var c = cols[k];
+    var v = String(rows[i][c - 1] || '').trim();
+    if (!v) continue;
+    var tCol = (c === live) ? _waTimeCol(sheet) : c + 1;
+    var t    = (tCol - 1 < rows[i].length) ? rows[i][tCol - 1] : '';
+    return { status: v, time: t ? String(t).trim() : '', col: c };
+  }
+  return none;
+}
+
+// Writes a row's outcome and keeps the in-memory snapshot in step, so later
+// rows in the same run see it.
+function _writeStatus(sheet, row, status, when) {
+  var sCol = _waStatusCol(sheet);
+  var tCol = _waTimeCol(sheet);
+
+  sheet.getRange(row, sCol).setValue(status);
+  sheet.getRange(row, tCol).setValue(when);
+
+  var rows = _gridCache;
+  var i    = row - 2;
+  if (rows && i >= 0 && i < rows.length) {
+    if (sCol - 1 < rows[i].length) rows[i][sCol - 1] = status;
+    if (tCol - 1 < rows[i].length) rows[i][tCol - 1] = when;
+  }
+}
 
 
 // -----------------------------------------------------------------
@@ -123,23 +228,19 @@ function _normPhone(p) {
 
 var _sentPhonesCache = null;
 
-// { <normalised phone>: <first row that got WA_SENT> }, memoized per run.
+// { <normalised phone>: <first row that got WA_SENT> }, memoized. Built from the
+// merged view, so numbers contacted before the column shift still count.
 function _sentPhones(sheet) {
   if (_sentPhonesCache) return _sentPhonesCache;
 
-  var map     = {};
-  var lastRow = sheet.getLastRow();
+  var map  = {};
+  var rows = _grid(sheet);
 
-  if (lastRow >= 2) {
-    var n        = lastRow - 1;
-    var phones   = sheet.getRange(2, PHONE_COL,          n, 1).getValues();
-    var statuses = sheet.getRange(2, _waStatusCol(sheet), n, 1).getValues();
-
-    for (var i = 0; i < n; i++) {
-      if (String(statuses[i][0] || '').indexOf('WA_SENT') !== 0) continue;
-      var phone = _normPhone(phones[i][0]);
-      if (phone && !map[phone]) map[phone] = i + 2;
-    }
+  for (var i = 0; i < rows.length; i++) {
+    var row = i + 2;
+    if (_statusAt(sheet, row).status.indexOf('WA_SENT') !== 0) continue;
+    var phone = _normPhone(rows[i][PHONE_COL - 1]);
+    if (phone && !map[phone]) map[phone] = row;
   }
 
   _sentPhonesCache = map;
@@ -165,8 +266,7 @@ function onFormSubmit(e) {
   var secret = props.getProperty('WEBHOOK_SECRET');
 
   if (!url || !secret) {
-    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_FAILED: missing script properties');
-    sheet.getRange(row, _waTimeCol(sheet)).setValue(new Date().toISOString());
+    _writeStatus(sheet, row, 'WA_FAILED: missing script properties', new Date().toISOString());
     return;
   }
 
@@ -179,8 +279,8 @@ function onFormSubmit(e) {
  * Run from the Apps Script editor: select manualProcessPending > Run.
  */
 function manualProcessPending() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
-  if (!sheet) { Logger.log('Sheet "Mentoring-arabic" not found'); return; }
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet) { Logger.log('Sheet "' + SHEET_NAME + '" not found'); return; }
 
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
@@ -203,15 +303,14 @@ function manualProcessPending() {
   var sent = 0, failed = 0, skipped = 0;
 
   try {
-    var n        = lastRow - 1;
-    var phones   = sheet.getRange(2, PHONE_COL,           n, 1).getValues();
-    var statuses = sheet.getRange(2, _waStatusCol(sheet), n, 1).getValues();
+    var rows = _grid(sheet);
 
-    for (var i = 0; i < n; i++) {
-      if (!String(phones[i][0]   || '').trim()) continue;   // no number
-      if ( String(statuses[i][0] || '').trim()) continue;   // already processed
+    for (var i = 0; i < rows.length; i++) {
+      var absRow = i + 2;
+      if (!String(rows[i][PHONE_COL - 1] || '').trim()) continue;   // no number
+      if (_statusAt(sheet, absRow).status) continue;                // already handled
 
-      var r = _sendRow(sheet, i + 2, url, secret);
+      var r = _sendRow(sheet, absRow, url, secret);
       if      (r.status === 'sent')    sent++;
       else if (r.status === 'failed')  failed++;
       else if (r.status === 'skipped') skipped++;
@@ -251,8 +350,8 @@ function doGet(e) {
     return _json({ error: 'Unauthorized' });
   }
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
-  if (!sheet) return _json({ error: 'Sheet "Mentoring-arabic" not found' });
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet) return _json({ error: 'Sheet "' + SHEET_NAME + '" not found' });
 
   var fromRow = parseInt((e && e.parameter && e.parameter.fromRow) || '2', 10);
   if (isNaN(fromRow) || fromRow < 2) fromRow = 2;
@@ -263,21 +362,19 @@ function doGet(e) {
   var byDay   = {};
 
   if (lastRow >= fromRow) {
-    var n          = lastRow - fromRow + 1;
-    var firstNames = sheet.getRange(fromRow, FIRST_NAME_COL, n, 1).getValues();
-    var phones     = sheet.getRange(fromRow, PHONE_COL,      n, 1).getValues();
-    var colsE      = sheet.getRange(fromRow, COL_E,          n, 1).getValues();
-    var colsG      = sheet.getRange(fromRow, COL_G,          n, 1).getValues();
-    var statuses   = sheet.getRange(fromRow, _waStatusCol(sheet),  n, 1).getValues();
-    var times      = sheet.getRange(fromRow, _waTimeCol(sheet),    n, 1).getValues();
+    var n    = lastRow - fromRow + 1;
+    var rows = _grid(sheet);
 
     for (var i = 0; i < n; i++) {
-      var phone  = String(phones[i][0]     || '').trim();
-      var name   = String(firstNames[i][0] || '').trim();
-      var colE   = String(colsE[i][0]      || '').trim();
-      var colG   = String(colsG[i][0]      || '').trim();
-      var status = String(statuses[i][0]   || '').trim();
-      var time   = times[i][0] ? String(times[i][0]).trim() : '';
+      var absRow = fromRow + i;
+      var src    = rows[absRow - 2] || [];
+      var phone  = String(src[PHONE_COL - 1]      || '').trim();
+      var name   = String(src[FIRST_NAME_COL - 1] || '').trim();
+      var colE   = String(src[COL_E - 1]          || '').trim();
+      var colG   = String(src[COL_G - 1]          || '').trim();
+      var merged = _statusAt(sheet, absRow);
+      var status = merged.status;
+      var time   = merged.time;
 
       if (!phone && !status && !name) continue;
 
@@ -308,7 +405,7 @@ function doGet(e) {
       }
 
       entries.push({
-        row:    fromRow + i,
+        row:    absRow,
         name:   name,
         phone:  phone,
         colE:   colE,
@@ -396,8 +493,8 @@ function doPost(e) {
                       .filter(function(r) { return !isNaN(r) && r >= MIN_ROW_TO_SEND; });
   if (rows.length === 0) return _json({ error: 'No valid rows (all below send floor row ' + MIN_ROW_TO_SEND + ')' });
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
-  if (!sheet) return _json({ error: 'Sheet "Mentoring-arabic" not found' });
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet) return _json({ error: 'Sheet "' + SHEET_NAME + '" not found' });
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return _json({ error: 'Another send is already running' });
@@ -434,8 +531,7 @@ function _sendRow(sheet, row, url, secret) {
   var clean = _normPhone(phone);
   if (clean.length < 8) {
     var why = phone ? 'not a usable phone number' : 'no phone';
-    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_SKIPPED: ' + why);
-    sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
+    _writeStatus(sheet, row, 'WA_SKIPPED: ' + why, now);
     return { row: row, status: 'skipped', detail: why };
   }
 
@@ -444,8 +540,7 @@ function _sendRow(sheet, row, url, secret) {
   var seen = _sentPhones(sheet);
   if (seen[clean] && seen[clean] !== row) {
     var dupe = 'same number already messaged on row ' + seen[clean];
-    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_SKIPPED: ' + dupe);
-    sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
+    _writeStatus(sheet, row, 'WA_SKIPPED: ' + dupe, now);
     return { row: row, status: 'skipped', detail: dupe };
   }
 
@@ -465,20 +560,17 @@ function _sendRow(sheet, row, url, secret) {
 
     if (httpCode === 200 && result.success) {
       var id = result.messageId || 'ok';
-      sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_SENT: ' + id);
-      sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
+      _writeStatus(sheet, row, 'WA_SENT: ' + id, now);
       seen[clean] = row;   // later rows with this number now skip
       return { row: row, status: 'sent', detail: id, httpCode: httpCode };
     }
 
     var err = result.error
             || ('HTTP ' + httpCode + (raw ? ' — ' + raw.substring(0, 120) : ' — empty body'));
-    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_FAILED: ' + err);
-    sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
+    _writeStatus(sheet, row, 'WA_FAILED: ' + err, now);
     return { row: row, status: 'failed', detail: err, httpCode: httpCode };
   } catch (err) {
-    sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_FAILED: ' + err.message);
-    sheet.getRange(row, _waTimeCol(sheet)).setValue(now);
+    _writeStatus(sheet, row, 'WA_FAILED: ' + err.message, now);
     return { row: row, status: 'failed', detail: err.message, httpCode: 0 };
   }
 }
@@ -577,7 +669,7 @@ function autoSendTick() {
   }
   var retryOnce = props.getProperty('AUTO_SEND_RETRY') === '1';
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
   if (!sheet) { Logger.log('autoSendTick: sheet not found'); return; }
 
   var lastRow = sheet.getLastRow();
@@ -587,18 +679,16 @@ function autoSendTick() {
   if (!lock.tryLock(5000)) { Logger.log('autoSendTick: lock busy'); return; }
 
   try {
-    // Pull phone (D) and status (AJ) for the whole sheet in two batched reads.
-    var n        = lastRow - 1;
-    var phones   = sheet.getRange(2, PHONE_COL,     n, 1).getValues();
-    var statuses = sheet.getRange(2, _waStatusCol(sheet), n, 1).getValues();
-
+    // One wide read, then the merged status per row so pre-shift outcomes count.
+    var rows  = _grid(sheet);
     var picks = [];   // { row, isRetry }
-    for (var i = 0; i < n && picks.length < AUTO_BATCH; i++) {
+
+    for (var i = 0; i < rows.length && picks.length < AUTO_BATCH; i++) {
       var absRow = i + 2;
       if (absRow < MIN_ROW_TO_SEND) continue;   // hard floor
-      var phone  = String(phones[i][0]   || '').trim();
-      var status = String(statuses[i][0] || '').trim();
+      var phone  = String(rows[i][PHONE_COL - 1] || '').trim();
       if (!phone) continue;
+      var status = _statusAt(sheet, absRow).status;
 
       if (status === '') {
         picks.push({ row: absRow, isRetry: false });
@@ -649,7 +739,8 @@ function _sendRowAuto(sheet, row, url, secret, isRetry) {
   if (isRetry && r.status === 'failed') {
     var current = String(sheet.getRange(row, _waStatusCol(sheet)).getValue());
     if (current.indexOf('WA_FAILED:') === 0) {
-      sheet.getRange(row, _waStatusCol(sheet)).setValue('WA_FAILED2:' + current.substring('WA_FAILED:'.length));
+      _writeStatus(sheet, row, 'WA_FAILED2:' + current.substring('WA_FAILED:'.length),
+                   new Date().toISOString());
     }
   }
   return r;
@@ -679,142 +770,78 @@ function setupTrigger() {
 
 
 // -----------------------------------------------------------------
-// Column-shift repair tools (run by hand from the editor)
+// Read-only report
 // -----------------------------------------------------------------
 
 /**
- * READ-ONLY diagnostic. Select auditWaColumns > Run, then View > Logs.
+ * Changes nothing. Select checkStatusColumns > Run, then View > Logs.
  *
- * Reports every column holding WA_SENT / WA_FAILED / WA_SKIPPED values and
- * says whether the script is currently looking at the right one. Run this any
- * time the dashboard suddenly shows thousands of rows as pending: that is the
- * signature of an inserted column having displaced the status column.
+ * Shows which columns hold WA_* outcomes, which one new outcomes are written
+ * to, and how many rows are still queued. Run it whenever the dashboard numbers
+ * look wrong: a sudden jump in "pending" is the signature of a column insert
+ * having displaced the status column.
  */
-function auditWaColumns() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
-  if (!sheet) { Logger.log('Sheet "Mentoring-arabic" not found'); return; }
+function checkStatusColumns() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet) { Logger.log('Sheet "' + SHEET_NAME + '" not found'); return; }
 
-  var lastRow = sheet.getLastRow();
-  var lastCol = sheet.getLastColumn();
-  if (lastRow < 2) { Logger.log('No data rows'); return; }
+  var rows = _grid(sheet);
+  if (!rows.length) { Logger.log('No data rows'); return; }
 
-  var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  var found  = [];
+  var live = _waStatusCol(sheet);
+  var cols = _statusCols(sheet);
 
-  for (var c = 0; c < lastCol; c++) {
-    var sent = 0, failed = 0, skipped = 0;
-    for (var r = 0; r < values.length; r++) {
-      var v = String(values[r][c] || '');
+  Logger.log('New outcomes are written to column ' + live +
+             ' (timestamp ' + _waTimeCol(sheet) + ')');
+  Logger.log('Columns consulted when reading, in order: ' + cols.join(', '));
+
+  for (var k = 0; k < cols.length; k++) {
+    var c = cols[k], sent = 0, failed = 0, skipped = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var v = String(rows[i][c - 1] || '');
       if      (v.indexOf('WA_SENT')    === 0) sent++;
       else if (v.indexOf('WA_FAILED')  === 0) failed++;
       else if (v.indexOf('WA_SKIPPED') === 0) skipped++;
     }
-    if (sent + failed + skipped > 0) {
-      found.push({ col: c + 1, sent: sent, failed: failed, skipped: skipped });
-    }
+    Logger.log('  column ' + c + ': ' + sent + ' sent, ' + failed + ' failed, ' +
+               skipped + ' skipped' + (c === live ? '   <-- written to' : '   (read only)'));
   }
 
-  var active = _waCols(sheet);
-  Logger.log('Script is reading and writing column ' + active.status +
-             ' (status) and ' + active.time + ' (timestamp)');
+  var sent = 0, failed = 0, skipped = 0, queued = 0, noPhone = 0;
+  var alreadySent = {};   // phone -> row, from rows that carry WA_SENT
+  var queuedRows  = [];
 
-  if (found.length === 0) { Logger.log('No WA_* values anywhere in the sheet'); return; }
+  for (var i = 0; i < rows.length; i++) {
+    var row   = i + 2;
+    var phone = _normPhone(rows[i][PHONE_COL - 1]);
+    var st    = _statusAt(sheet, row).status;
 
-  for (var i = 0; i < found.length; i++) {
-    var f = found[i];
-    Logger.log('  column ' + f.col + ': ' + f.sent + ' sent, ' + f.failed +
-               ' failed, ' + f.skipped + ' skipped' +
-               (f.col === active.status ? '   <-- the one in use' : ''));
+    if (st.indexOf('WA_SENT') === 0) {
+      sent++;
+      if (phone && !alreadySent[phone]) alreadySent[phone] = row;
+    } else if (st.indexOf('WA_FAILED')  === 0) failed++;
+    else if   (st.indexOf('WA_SKIPPED') === 0) skipped++;
+    else if   (phone.length < 8)               noPhone++;
+    else { queued++; queuedRows.push({ row: row, phone: phone }); }
   }
 
-  if (found.length < 2) return;
-
-  // More than one column holds statuses. That is only dangerous when a stray
-  // column knows about a row the live column does not, because those rows read
-  // as never-contacted and would be messaged again. Leftover copies of rows the
-  // live column already covers are harmless.
-  var unseen = 0;
-  for (var j = 0; j < found.length; j++) {
-    if (found[j].col === active.status) continue;
-    for (var k = 0; k < values.length; k++) {
-      var stray = String(values[k][found[j].col - 1] || '');
-      var live  = String(values[k][active.status - 1] || '');
-      if (stray.indexOf('WA_') === 0 && live.indexOf('WA_') !== 0) unseen++;
-    }
+  // Two kinds of repeat: a queued row whose number was contacted long ago, and
+  // two queued rows sharing a number. Both get skipped, so neither is a message.
+  var oldRepeat = 0, newRepeat = 0;
+  var firstQueued = {};
+  for (var q = 0; q < queuedRows.length; q++) {
+    var ph = queuedRows[q].phone;
+    if (alreadySent[ph])        { oldRepeat++; continue; }
+    if (firstQueued[ph])        { newRepeat++; continue; }
+    firstQueued[ph] = queuedRows[q].row;
   }
 
-  if (unseen > 0) {
-    Logger.log('WARNING: ' + unseen + ' rows have a status in another column but ' +
-               'none in column ' + active.status + '. The auto loop would message ' +
-               'them again. Run migrateWaColumns(<status col>, <timestamp col>) ' +
-               'before enabling it.');
-  } else {
-    Logger.log('OK: column ' + active.status + ' covers every row the other ' +
-               'columns know about. The rest are leftover copies and can be cleared.');
-  }
-}
-
-/**
- * ONE-TIME REPAIR. Consolidates a displaced status pair into the live one.
- *
- * After the Sept 2026 utm_* insert the old history sat in AO/AP, so:
- *     migrateWaColumns(41, 42)
- *
- * Copies only into cells that are currently blank, so anything newer already
- * in the live columns wins and nothing is overwritten. The source columns are
- * left untouched; check the result with auditWaColumns, then clear them by hand.
- */
-function migrateWaColumns(fromStatusCol, fromTimeCol) {
-  fromStatusCol = parseInt(fromStatusCol, 10);
-  fromTimeCol   = parseInt(fromTimeCol, 10);
-  if (!fromStatusCol || !fromTimeCol) {
-    Logger.log('Call it as migrateWaColumns(<status column>, <timestamp column>), e.g. migrateWaColumns(41, 42)');
-    return;
-  }
-
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Mentoring-arabic');
-  if (!sheet) { Logger.log('Sheet "Mentoring-arabic" not found'); return; }
-
-  var to = _waCols(sheet);
-  if (fromStatusCol === to.status) {
-    Logger.log('Source and target are the same column (' + to.status + '); nothing to do');
-    return;
-  }
-
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) { Logger.log('No data rows'); return; }
-  var n = lastRow - 1;
-
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) { Logger.log('Another execution is running'); return; }
-
-  try {
-    var srcStatus = sheet.getRange(2, fromStatusCol, n, 1).getValues();
-    var srcTime   = sheet.getRange(2, fromTimeCol,   n, 1).getValues();
-    var dstStatus = sheet.getRange(2, to.status,     n, 1).getValues();
-    var dstTime   = sheet.getRange(2, to.time,       n, 1).getValues();
-
-    var copied = 0, kept = 0;
-
-    for (var i = 0; i < n; i++) {
-      var src = String(srcStatus[i][0] || '').trim();
-      var dst = String(dstStatus[i][0] || '').trim();
-      if (!src) continue;
-      if (dst) { kept++; continue; }       // target already newer, leave it
-      dstStatus[i][0] = srcStatus[i][0];
-      dstTime[i][0]   = srcTime[i][0];
-      copied++;
-    }
-
-    sheet.getRange(2, to.status, n, 1).setValues(dstStatus);
-    sheet.getRange(2, to.time,   n, 1).setValues(dstTime);
-
-    Logger.log('migrateWaColumns: copied ' + copied + ' rows from column ' +
-               fromStatusCol + ' into column ' + to.status + '; left ' + kept +
-               ' rows alone because the target already had a newer value.');
-    Logger.log('Source column ' + fromStatusCol + ' was NOT cleared. ' +
-               'Run auditWaColumns to verify, then clear it manually.');
-  } finally {
-    lock.releaseLock();
-  }
+  Logger.log('Merged view across those columns:');
+  Logger.log('  ' + sent + ' sent, ' + failed + ' failed, ' + skipped + ' skipped');
+  Logger.log('  ' + queued + ' rows queued');
+  Logger.log('    ' + oldRepeat + ' of them repeat a number already messaged');
+  Logger.log('    ' + newRepeat + ' of them repeat another queued row');
+  Logger.log('    ' + (queued - oldRepeat - newRepeat) + ' would actually be messaged');
+  Logger.log('  ' + noPhone + ' rows have no usable phone number');
+  Logger.log('Nothing was changed by this check.');
 }
