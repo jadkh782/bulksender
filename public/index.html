@@ -1200,15 +1200,23 @@
             body: JSON.stringify(payload)
           });
 
-          const data = await resp.json();
+          // 360dialog sits behind Cloudflare, which answers with a plain-text
+          // page when it cannot reach the origin. Parsing that blind reports a
+          // SyntaxError as the send reason and hides the real cause.
+          const raw  = await resp.text();
+          let   data = null;
+          try { data = JSON.parse(raw); } catch (e) { /* non-JSON upstream */ }
 
-          if (resp.ok && data.messages && data.messages[0]) {
+          if (resp.ok && data && data.messages && data.messages[0]) {
             updateRowStatus(qi, 'success', data.messages[0].id);
             sendStats.success++;
             sentPhones.add(phone);
             updateSentDisplay();
           } else {
-            const errMsg = data.error?.message || data.message || JSON.stringify(data);
+            const errMsg = data
+              ? (data.error?.message || data.message || JSON.stringify(data))
+              : `HTTP ${resp.status} — ` +
+                (raw.replace(/\s+/g, ' ').trim().slice(0, 120) || 'empty response');
             updateRowStatus(qi, 'error', errMsg);
             sendStats.error++;
           }
@@ -1298,6 +1306,23 @@
       dashStartRefresh();
     }
 
+    // Reads a proxied Apps Script response. The Worker forwards the body
+    // verbatim, and Apps Script answers with an HTML page when it throws or when
+    // the deployment needs reauthorising, so a blind .json() turns a real and
+    // readable error into an opaque SyntaxError.
+    async function dashReadJson(resp) {
+      const raw = await resp.text();
+      let data = null;
+      try { data = JSON.parse(raw); } catch (e) { /* not JSON */ }
+
+      if (!data) {
+        const body = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+        throw new Error('HTTP ' + resp.status + ' — ' + (body || 'empty response'));
+      }
+      if (data.error) throw new Error(data.error);
+      return data;
+    }
+
     // Proxy through the Worker — Apps Script blocks direct cross-origin fetch.
     function dashProxyBase(cfg) {
       return '/api/dashboard?url=' + encodeURIComponent(cfg.url) +
@@ -1314,8 +1339,7 @@
 
       try {
         const resp = await fetch(dashEndpoint(cfg), { method: 'GET' });
-        const data = await resp.json();
-        if (data.error) throw new Error(data.error);
+        const data = await dashReadJson(resp);
 
         dashClearError();
         dashRender(data);
@@ -1407,8 +1431,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'configureAuto', enabled, intervalMin, retryOnce })
         });
-        const data = await resp.json();
-        if (data.error) throw new Error(data.error);
+        await dashReadJson(resp);
         dashAutoDirty = false;
         dashShowInfo(enabled
           ? `Auto-send on — every ${intervalMin} min${retryOnce ? ', retrying failures once' : ''}`
@@ -1634,8 +1657,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'send', rows: batch })
           });
-          const data = await resp.json();
-          if (data.error) throw new Error(data.error);
+          const data = await dashReadJson(resp);
 
           for (const r of (data.results || [])) {
             if      (r.status === 'sent')    totals.sent++;
@@ -1650,10 +1672,13 @@
         );
         dashSelected.clear();
       } catch (err) {
-        dashShowError(
-          `Stopped after ${processed}/${rows.length}: ${err.message}. ` +
-          `Already-sent rows are persisted in the sheet.`
-        );
+        // The progress banner is what the user is looking at, so the failure has
+        // to land there too. The error box sits further up the page and is
+        // easily scrolled out of view.
+        const msg = `Stopped after ${processed}/${rows.length}: ${err.message}. ` +
+                    `Rows already marked in the sheet were sent.`;
+        dashShowError(msg);
+        dashShowInfo(msg, true);
       } finally {
         dashSending = false;
         await dashFetch();
@@ -1661,9 +1686,9 @@
       }
     }
 
-    function dashShowInfo(msg) {
+    function dashShowInfo(msg, isError) {
       document.getElementById('dashSendInfo').innerHTML =
-        `<div class="info-box">${escapeHtml(msg)}</div>`;
+        `<div class="${isError ? 'error-box' : 'info-box'}">${escapeHtml(msg)}</div>`;
     }
     function dashClearInfo() {
       document.getElementById('dashSendInfo').innerHTML = '';
